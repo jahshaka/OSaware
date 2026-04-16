@@ -1,0 +1,38 @@
+0 REM *** LABELDEMO — Alphanumeric label demonstration ***
+10 CLS : COLOUR 3
+20 PRINT "LABEL DEMO"
+30 PRINT "=========="
+40 PRINT ""
+50 PRINT "Click to draw. C=clear, Q=quit"
+55 PSET 0,0,0
+60 ON MOUSE GOSUB ClickHandler
+70 MOUSE ON
+75 MainLoop:
+80 K = INKEY
+90 IF K = 81 THEN GOTO Done
+95 IF K = 113 THEN GOTO Done
+97 IF K = 27 THEN GOTO Done
+100 IF K = 67 THEN GOSUB ClearScreen
+103 IF K = 99 THEN GOSUB ClearScreen
+110 SLEEP 30
+120 GOTO MainLoop
+125 ClickHandler:
+130 B = MOUSE(0)
+140 IF B = 2 THEN GOSUB ClearScreen : RETURN
+150 IF B = -1 THEN GOSUB DrawDot
+155 IF B = 1 THEN GOSUB DrawDot
+160 RETURN
+165 DrawDot:
+170 C = INT(RND(1) * 14) + 1
+180 CIRCLE MOUSE(3), MOUSE(4), 8, C
+190 PAINT MOUSE(3), MOUSE(4), C
+200 RETURN
+205 ClearScreen:
+210 CLS : COLOUR 3
+220 PRINT "Click to draw. C=clear, Q=quit"
+225 PSET 0,0,0
+230 RETURN
+235 Done:
+240 MOUSE OFF
+250 CLS : COLOUR 3
+260 PRINT "Label demo ended."

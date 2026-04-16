@@ -1,0 +1,216 @@
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      /* Do NOT set overflow:hidden here — it swallows wheel events and
+         prevents the terminal div from scrolling on macOS Chrome. */
+    }
+
+    /* -----------------------------------------------------------------------
+       Desktop layout — centred terminal with header and footer visible
+    ----------------------------------------------------------------------- */
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: sans-serif;
+      color: #ccc;
+    }
+
+    #header {
+      font-size: .75rem;
+      font-weight: 400;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      color: #444;
+      margin-bottom: .5rem;
+      flex-shrink: 0;
+    }
+
+    #terminal-wrapper {
+      position: relative;
+      flex-shrink: 0;
+      background: #000;
+      outline: 1px solid rgb(100, 100, 100);
+      box-shadow: 0 0 18px rgba(100, 100, 100, 0.15);
+      overflow: hidden;  /* switched to scroll in idle mode by setScrollMode() */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(120,120,120,0.7) rgba(0,0,0,0.4);
+      /* Prevent grey fringing */
+      isolation: isolate;
+    }
+    #terminal-wrapper::-webkit-scrollbar       { width: 8px; }
+    #terminal-wrapper::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); }
+    #terminal-wrapper::-webkit-scrollbar-thumb { background: rgba(120,120,120,0.7); border-radius: 4px; min-height: 40px; }
+    #terminal-wrapper::-webkit-scrollbar-thumb:hover { background: rgba(180,180,180,0.9); }
+
+    #kanvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      background: #000;   /* fills wrapper immediately before JS sizes it */
+    }
+
+    #oEmulator_div {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 100%;
+      text-align: left;
+      word-break: break-all;
+      overflow: hidden;
+      cursor: text;
+      scroll-behavior: smooth;
+      padding-bottom: 2em;
+      background: #000;
+      z-index: 4;
+      /* Prevent subpixel grey fringing on macOS */
+      -webkit-font-smoothing: antialiased;
+      line-height: normal;
+    }
+
+    /* oEmulator_div never scrolls itself — the wrapper scrolls in idle mode */
+    /* Graphics mode: canvas shows through when this class is active */
+    #oEmulator_div.graphics-active {
+      background: transparent !important;
+    }
+    /* CSS cursor blink — uses visibility toggle so DOM size never changes */
+    @keyframes blink-cursor {
+      0%, 49%  { visibility: visible; }
+      50%, 100% { visibility: hidden; }
+    }
+    #oEmulator_div b[id$="_cursor"] {
+      animation: blink-cursor 0.6s step-start infinite;
+    }
+
+    #footer {
+      font-size: .7rem;
+      color: #333;
+      margin-top: .5rem;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    #footer code { color: #555; }
+    #footer a { color: #555; text-decoration: none; font-weight: bold; }
+    #footer a:hover { text-decoration: underline; color: #222; }
+    #footer a#fs-toggle { color: #446; }
+    #footer a#fs-toggle:hover { color: #88a; }
+
+    /* -----------------------------------------------------------------------
+       Fullscreen mode — header/footer stay visible, terminal positioned by JS
+    ----------------------------------------------------------------------- */
+    body.fullscreen #header {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 10000;
+      text-align: center;
+    }
+
+    body.fullscreen #footer {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 10000;
+      text-align: center;
+    }
+
+    body.fullscreen #terminal-wrapper {
+      outline: 1px solid rgb(100, 100, 100);
+      box-shadow: 0 0 18px rgba(100, 100, 100, 0.15);
+    }
+
+    /* -----------------------------------------------------------------------
+       Overscan mode — true 100% fullscreen, no header or footer
+    ----------------------------------------------------------------------- */
+    body.overscan #header,
+    body.overscan #footer { display: none; }
+
+    body.overscan #terminal-wrapper {
+      outline: none;
+      box-shadow: none;
+    }
+
+    /* Hidden input that receives mobile keyboard events */
+    #mobile-input {
+      position: fixed;
+      top: -200px;
+      left: 0;
+      width: 100%;
+      opacity: 0;
+      font-size: 16px; /* prevents iOS zoom on focus */
+    }
+
+    /* -----------------------------------------------------------------------
+       Mobile layout — terminal fills edge to edge with header/footer visible.
+       The flexbox column layout handles this naturally; we just need to ensure
+       the wrapper stretches to fill all remaining space between header and footer.
+    ----------------------------------------------------------------------- */
+    @media (max-width: 600px) {
+      body {
+        justify-content: flex-start;
+      }
+
+      #terminal-wrapper {
+        /* Fill the full width edge to edge, outline instead of border so it
+           sits outside the element and all four sides are fully visible. */
+        width: 100vw !important;
+        outline: 1px solid rgb(100, 100, 100);
+        box-shadow: none;
+      }
+
+      #header {
+        width: 100%;
+        text-align: center;
+        padding: .4rem 0;
+      }
+
+      #footer {
+        width: 100%;
+        text-align: center;
+        padding: .3rem 0;
+      }
+    }
+
+    /* Force full CSS recomposite when GL program starts */
+    body.gl-repaint #terminal-wrapper {
+        outline-color: rgba(100, 100, 100, 0.999);
+    }
+
+    /* -----------------------------------------------------------------------
+       Mobile header/footer — shown only on small screens
+    ----------------------------------------------------------------------- */
+    #header-mobile { display: none; }
+    #footer-mobile { display: none; }
+
+    @media (max-width: 600px) {
+      #header         { display: none; }
+      #footer         { display: none; }
+      #header-mobile  {
+        display: block;
+        text-align: center;
+        font-size: 10px;
+        padding: 3px 6px;
+        line-height: 1.4;
+        color: #aaa;
+        background: #111;
+      }
+      #header-mobile div { margin: 0; }
+      #footer-mobile {
+        display: block;
+        text-align: center;
+        font-size: 11px;
+        padding: 3px 6px;
+        color: #aaa;
+        background: #111;
+      }
+      #footer-mobile a { color: #7af; text-decoration: none; }
+    }

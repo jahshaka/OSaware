@@ -1,0 +1,30 @@
+# OSAWARE - Apache configuration
+
+<IfModule mod_headers.c>
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.anthropic.com; img-src 'self' data:; font-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors 'none';"
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+<IfModule mod_mime.c>
+    AddType application/javascript .js
+    AddType text/css .css
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/html              "access plus 0 seconds"
+    ExpiresByType application/javascript "access plus 1 hour"
+    ExpiresByType text/css               "access plus 1 hour"
+</IfModule>
+
+Options -Indexes
+
+<FilesMatch "^[A-Z0-9]+$">
+    <IfModule mod_headers.c>
+        Header set Cache-Control "no-store, no-cache, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </IfModule>
+</FilesMatch>

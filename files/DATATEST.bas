@@ -1,0 +1,11 @@
+0 GOTO 2000 : REM DATA SECTION
+10 FOR I=1 TO 4
+15 READ A$(I)
+20 NEXT I
+50 REM ** DUMP SECTION **
+55 FOR J=1 TO 4
+60 PRINT A$(J)
+65 NEXT J
+70 END
+2000 DATA "Hello this is line 1"
+2001 DATA "Hello this is line 2", "Line 3", "Line 4"

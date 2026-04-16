@@ -1,0 +1,90 @@
+0 REM VFSTEST — VFS asset system test tool
+5 CLS : COLOUR 3
+6 PRINT "VFS ASSET TEST"
+7 PRINT "=============="
+8 PRINT ""
+9 PASS=0 : FAIL=0
+10 REM === T1: DIR shows built-in folders ===
+11 PRINT "T1. DIR shows MAZE3D and DEMO folders..."
+12 DIR
+13 PRINT "  (check [FOLDERS] shows MAZE3D/ and DEMO/)"
+14 PRINT ""
+15 DUMMY=GETKEY()
+20 REM === T2: DIR MAZE3D ===
+21 PRINT "T2. DIR MAZE3D..."
+22 DIR MAZE3D
+23 PRINT ""
+25 REM === T3: DIR DEMO ===
+26 PRINT "T3. DIR DEMO..."
+27 DIR DEMO
+28 PRINT ""
+29 DUMMY=GETKEY()
+40 REM === T4: LOADIMG from VFS path ===
+41 PRINT "T4. LOADIMG from MAZE3D/STONE.PNG..."
+42 LOADIMG "stone", "MAZE3D/STONE.PNG"
+43 DISPLAY "stone", 10, 10, 128, 128
+44 PRINT "  Displayed stone texture (check screen for image)"
+45 PASS=PASS+1 : PRINT "   done"
+46 PRINT ""
+50 REM === T5: VFSPUT stores text ===
+51 PRINT "T5. VFSPUT text asset..."
+52 T5$ = "Hello from OSAWARE BASIC!"
+53 VFSPUT "MYTEST/HELLO.TXT", T5$
+54 R5$ = VFSGET$("MYTEST/HELLO.TXT")
+55 IF R5$ = T5$ THEN PASS=PASS+1 : PRINT "   done: ["; R5$; "]"
+56 IF R5$ <> T5$ THEN FAIL=FAIL+1 : PRINT "  FAIL: got ["; R5$; "]"
+57 PRINT ""
+60 REM === T6: DIR shows user folder ===
+61 PRINT "T6. DIR MYTEST shows new folder..."
+62 DIR MYTEST
+63 PRINT ""
+70 REM === T7: VFSPUT multiple files ===
+71 PRINT "T7. VFSPUT multiple files..."
+72 VFSPUT "MYTEST/DATA1.DAT", "line1,line2,line3"
+73 VFSPUT "MYTEST/DATA2.DAT", "100,200,300"
+74 R7A$ = VFSGET$("MYTEST/DATA1.DAT")
+75 R7B$ = VFSGET$("MYTEST/DATA2.DAT")
+76 IF R7A$ = "line1,line2,line3" AND R7B$ = "100,200,300" THEN PASS=PASS+1 : PRINT "   done"
+77 IF R7A$ <> "line1,line2,line3" OR R7B$ <> "100,200,300" THEN FAIL=FAIL+1 : PRINT "  FAIL: ["; R7A$; "] / ["; R7B$; "]"
+78 DIR MYTEST
+79 PRINT ""
+80 DUMMY=GETKEY()
+90 REM === T8: VFSIMG — save image to VFS ===
+91 PRINT "T8. VFSIMG saves image to VFS..."
+92 LOADIMG "floor", "MAZE3D/FLOOR.PNG"
+93 VFSIMG "MYTEST/FLOOR.PNG", "floor"
+94 R8$ = VFSGET$("MYTEST/FLOOR.PNG")
+95 IF LEN(R8$) > 100 THEN PASS=PASS+1 : PRINT "   done (" + STR$(LEN(R8$)) + " bytes)"
+96 IF LEN(R8$) <= 100 THEN FAIL=FAIL+1 : PRINT "  FAIL: image not stored"
+99 PRINT ""
+110 REM === T9: VFSDEL removes asset ===
+111 PRINT "T9. VFSDEL removes asset..."
+112 VFSDEL "MYTEST/DATA2.DAT"
+113 R9$ = VFSGET$("MYTEST/DATA2.DAT")
+114 IF R9$ = "" THEN PASS=PASS+1 : PRINT "   done (deleted)"
+115 IF R9$ <> "" THEN FAIL=FAIL+1 : PRINT "  FAIL: still exists"
+116 DIR MYTEST
+117 PRINT ""
+118 DUMMY=GETKEY()
+120 REM === T10: LOAD * shows user folder ===
+121 PRINT "T10. LOAD * shows MYTEST/ in [FOLDERS]..."
+122 LOAD *
+123 PRINT "  (MYTEST/ should appear under [FOLDERS])"
+124 PRINT ""
+130 REM === Cleanup ===
+131 PRINT "Cleaning up..."
+132 VFSDEL "MYTEST/HELLO.TXT"
+133 VFSDEL "MYTEST/DATA1.DAT"
+134 VFSDEL "MYTEST/FLOOR.PNG"
+135 PRINT "Done."
+136 PRINT ""
+140 PRINT "========================="
+141 TOTAL=PASS+FAIL
+142 COLOUR 3
+143 PRINT "RESULTS: ";PASS;"/";TOTAL;" passed"
+144 IF FAIL=0 THEN COLOUR 10 : PRINT "ALL VFS TESTS PASSED!"
+145 IF FAIL>0 THEN COLOUR 2 : PRINT FAIL;" TESTS FAILED"
+146 COLOUR 3
+147 PRINT ""
+148 PRINT "Press any key to exit."
+149 DUMMY=GETKEY()

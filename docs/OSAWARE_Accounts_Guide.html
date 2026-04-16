@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSAWARE — Accounts Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+
+  :root {
+    --bg:      #0d1117;
+    --bg2:     #161b22;
+    --bg3:     #21262d;
+    --border:  #30363d;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --accent:  #58a6ff;
+    --green:   #3fb950;
+    --yellow:  #d29922;
+    --red:     #f85149;
+    --mono:    'IBM Plex Mono', monospace;
+    --sans:    'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  .layout { display: flex; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 32px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-logo {
+    padding: 0 24px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .sidebar-logo h1 { font-size: 18px; font-weight: 600; color: var(--accent); letter-spacing: -0.3px; }
+  .sidebar-logo span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  .nav-section {
+    padding: 10px 24px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  .nav-link {
+    display: block;
+    padding: 5px 24px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    transition: all 0.12s;
+    border-left: 2px solid transparent;
+  }
+  .nav-link:hover { color: var(--text); background: var(--bg3); border-left-color: var(--accent); }
+
+  .nav-divider {
+    margin: 10px 24px;
+    border: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Main content ── */
+  .main { flex: 1; padding: 48px 64px; max-width: 920px; }
+
+  /* ── Typography ── */
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.5px; margin-bottom: 6px; }
+
+  h2 {
+    font-size: 20px; font-weight: 600; color: var(--text);
+    margin: 48px 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    background: var(--accent); color: var(--bg);
+    border-radius: 50%; font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+
+  h3 {
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin: 20px 0 6px;
+    text-transform: uppercase; letter-spacing: 0.6px;
+  }
+
+  p { margin-bottom: 10px; }
+  .subtitle { color: var(--muted); font-size: 15px; margin-bottom: 36px; }
+
+  ul { margin: 8px 0 16px 22px; }
+  li { margin-bottom: 6px; }
+  ul ul { margin: 6px 0 6px 18px; }
+
+  /* ── Intro header card ── */
+  .intro-header {
+    background: linear-gradient(135deg, rgba(88,166,255,0.06), rgba(63,185,80,0.03));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin-bottom: 40px;
+  }
+  .intro-header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .intro-header p + p { margin-top: 10px; }
+  .intro-header strong { color: var(--text); }
+
+  /* ── Code ── */
+  pre {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px;
+    overflow-x: auto; margin: 10px 0 18px;
+  }
+  pre code { font-family: var(--mono); font-size: 13px; color: var(--text); line-height: 1.65; }
+  code { font-family: var(--mono); font-size: 13px; background: var(--bg3); padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .comment, .cm { color: var(--muted); }
+  .cmd, .cg     { color: var(--green); }
+  .val, .cv     { color: var(--yellow); }
+  .ck           { color: var(--accent); }
+  .star         { color: var(--yellow); }
+
+  /* ── Callouts ── */
+  .callout {
+    border-radius: 8px; padding: 13px 17px; margin: 14px 0;
+    border-left: 3px solid; font-size: 14px;
+  }
+  .callout-info    { background: rgba(88,166,255,0.07);  border-color: var(--accent);  }
+  .callout-warn    { background: rgba(210,153,34,0.07);  border-color: var(--yellow);  }
+  .callout-danger  { background: rgba(248,81,73,0.07);   border-color: var(--red);     }
+  .callout-success { background: rgba(63,185,80,0.07);   border-color: var(--green);   }
+  .callout strong, .callout b { display: block; margin-bottom: 3px; }
+  .callout-info    strong { color: var(--accent); }
+  .callout-warn    strong { color: var(--yellow); }
+  .callout-danger  strong { color: var(--red);    }
+  .callout-success strong { color: var(--green);  }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; }
+  th {
+    text-align: left; padding: 9px 13px;
+    background: var(--bg3); color: var(--muted);
+    font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg2); }
+  td code { font-size: 12px; }
+
+  /* ── Section dividers ── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 44px 0; }
+
+  /* ── Section banner (for major doc sections) ── */
+  .section-banner {
+    margin: 56px 0 32px;
+    padding: 18px 24px;
+    background: var(--bg3);
+    border-radius: 10px;
+    border-left: 4px solid var(--accent);
+    display: flex; align-items: center; gap: 14px;
+  }
+  .section-banner .icon { font-size: 24px; }
+  .section-banner h1 { font-size: 22px; margin: 0; }
+  .section-banner p { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+  @media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; height: auto; position: relative; }
+    .main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ═══════════════════════ SIDEBAR ═══════════════════════ -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <h1>OSAWARE</h1>
+      <span>Accounts Guide</span>
+    </div>
+
+    <div class="nav-section">Getting Started</div>
+    <a class="nav-link" href="#overview">Overview</a>
+    <a class="nav-link" href="#storage-modes">Storage Modes</a>
+
+    <div class="nav-section">Creating an Account</div>
+    <a class="nav-link" href="#register">Register</a>
+    <a class="nav-link" href="#whoami">Check Who You Are</a>
+    <a class="nav-link" href="#login-logout">Login &amp; Logout</a>
+
+    <div class="nav-section">Managing Your Account</div>
+    <a class="nav-link" href="#password">Change Password</a>
+    <a class="nav-link" href="#delete">Delete Account</a>
+
+    <hr class="nav-divider">
+
+    <div class="nav-section">Reference</div>
+    <a class="nav-link" href="#quick-ref">Command Reference</a>
+    <a class="nav-link" href="#troubleshooting">Troubleshooting</a>
+  </nav>
+
+  <!-- ═══════════════════════ MAIN ═══════════════════════ -->
+  <main class="main">
+
+    <h1>Accounts Guide</h1>
+    <p class="subtitle">Creating an account, changing your password, and deleting your account in OSAWARE.</p>
+
+    <div class="intro-header">
+      <p>
+        OSAWARE works without an account — your programs and files stay in your browser
+        in <strong>LOCAL</strong> mode. When you create an account, your work syncs to the
+        cloud and follows you to any device you log into.
+      </p>
+      <p>
+        This guide covers the three commands you need to manage your account:
+        <code>REGISTER</code>, <code>PASSWORD</code>, and <code>DELETEACCOUNT</code>,
+        plus the supporting commands <code>LOGIN</code>, <code>LOGOUT</code>, and
+        <code>WHOAMI</code>.
+      </p>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         GETTING STARTED
+         ══════════════════════════════════════════════════════ -->
+
+    <div class="section-banner">
+      <div class="icon">📖</div>
+      <div>
+        <h1>Getting Started</h1>
+        <p>How OSAWARE storage works and what an account changes.</p>
+      </div>
+    </div>
+
+    <h2 id="overview"><span class="step-num">1</span> Overview</h2>
+    <p>
+      Every command you'll run in this guide is typed at the OSAWARE prompt
+      (the <code>]</code> character at the start of a line). You don't need to install
+      anything. If you can see the OSAWARE terminal, you can run these commands.
+    </p>
+
+    <p>
+      The three account-management commands are all <strong>interactive</strong> —
+      they prompt you for any sensitive information (like passwords) one step at a
+      time, with characters hidden as you type. You can press <code>ESC</code> at any
+      prompt to cancel without making changes.
+    </p>
+
+    <h2 id="storage-modes"><span class="step-num">2</span> Storage Modes</h2>
+    <p>
+      OSAWARE has three independent storage modes. They never mix and never see each
+      other's data.
+    </p>
+
+    <table>
+      <tr><th>Mode</th><th>Where Data Lives</th><th>Sync Across Devices</th></tr>
+      <tr>
+        <td><strong>LOCAL</strong></td>
+        <td>Your browser (localStorage)</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><strong>REAL</strong></td>
+        <td>OSAWARE backend (the cloud)</td>
+        <td>Yes — log in anywhere</td>
+      </tr>
+      <tr>
+        <td><strong>DEV</strong></td>
+        <td>In-memory sandbox (testing only)</td>
+        <td>No — wiped on refresh</td>
+      </tr>
+    </table>
+
+    <p>
+      LOCAL is what you start with. The moment you create an account or log in, you
+      switch to REAL mode and your LOCAL work is preserved in the background. When
+      you log out, you're back in LOCAL with everything you had before.
+    </p>
+
+    <div class="callout callout-info">
+      <strong>Your LOCAL data is never destroyed by logging in</strong>
+      Logging in hides your LOCAL programs and files for the duration of the session
+      and shows you your account's data instead. The moment you <code>LOGOUT</code>,
+      your LOCAL sandbox returns exactly as it was. Each account is fully isolated
+      from every other account and from LOCAL.
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         CREATING AN ACCOUNT
+         ══════════════════════════════════════════════════════ -->
+
+    <div class="section-banner">
+      <div class="icon">✨</div>
+      <div>
+        <h1>Creating an Account</h1>
+        <p>Register a new account, sign in, and check your status.</p>
+      </div>
+    </div>
+
+    <h2 id="register"><span class="step-num">3</span> Register</h2>
+    <p>
+      At the OSAWARE prompt, type <code>REGISTER</code> followed by a username in
+      quotes. You'll be asked for a password.
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">REGISTER</span> <span class="cv">"alice"</span>
+Enter password: <span class="star">******</span>
+<span class="cm">Registered and logged in as alice</span>
+<span class="cm">(your LOCAL data is preserved and will return on LOGOUT)</span></code></pre>
+
+    <p>
+      That's it. You're now logged in, and your programs and files will sync across
+      any device where you sign in with the same username and password.
+    </p>
+
+    <h3>Username and Password Rules</h3>
+    <table>
+      <tr><th>Field</th><th>Rules</th></tr>
+      <tr><td><strong>Username</strong></td><td>3 to 32 characters · letters, digits, and underscores only</td></tr>
+      <tr><td><strong>Password</strong></td><td>At least 6 characters, up to 128</td></tr>
+      <tr><td><strong>Uniqueness</strong></td><td>Usernames are globally unique — if it's taken, REGISTER will say so</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+      <strong>Pick a password you'll remember</strong>
+      OSAWARE does not currently offer password reset by email. If you forget your
+      password, you'll need to contact an administrator. Your data will still be
+      there — but plan ahead and pick something memorable.
+    </div>
+
+    <h2 id="whoami"><span class="step-num">4</span> Check Who You Are</h2>
+    <p>
+      To check who you're currently signed in as, use <code>WHOAMI</code>. It prints
+      your username, or <code>local</code> if you're not logged into any account.
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">WHOAMI</span>
+<span class="cm">alice</span></code></pre>
+
+    <p>
+      This is useful at any time, especially if you're switching between LOCAL work
+      and your account.
+    </p>
+
+    <h2 id="login-logout"><span class="step-num">5</span> Login &amp; Logout</h2>
+    <p>
+      To log out and return to LOCAL mode, use <code>LOGOUT</code>:
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">LOGOUT</span>
+<span class="cm">Logged out (was alice)</span></code></pre>
+
+    <p>
+      To log back in later — from any device, anywhere — use <code>LOGIN</code>:
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">LOGIN</span> <span class="cv">"alice"</span>
+Enter password: <span class="star">******</span>
+<span class="cm">Logged in as alice</span></code></pre>
+
+    <div class="callout callout-info">
+      <strong>Logging in from a new device</strong>
+      The first time you sign in on a new device, OSAWARE pulls your account's data
+      from the backend. Your programs and files appear exactly as they were on the
+      device where you last saved them.
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MANAGING YOUR ACCOUNT
+         ══════════════════════════════════════════════════════ -->
+
+    <div class="section-banner">
+      <div class="icon">⚙️</div>
+      <div>
+        <h1>Managing Your Account</h1>
+        <p>Change your password or delete your account when you no longer need it.</p>
+      </div>
+    </div>
+
+    <h2 id="password"><span class="step-num">6</span> Change Password</h2>
+    <p>
+      Type <code>PASSWORD</code> at the prompt. You'll be asked three things in
+      order: your current password, your new password, and the new password again
+      to confirm.
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">PASSWORD</span>
+Current password: <span class="star">******</span>
+New password: <span class="star">*********</span>
+Confirm new password: <span class="star">*********</span>
+<span class="cm">Password changed</span></code></pre>
+
+    <p>
+      After a successful change, you stay logged in on the device where you ran the
+      command. <strong>Other devices</strong> where the same account is signed in
+      are logged out automatically — they will need to enter the new password to
+      get back in.
+    </p>
+
+    <div class="callout callout-info">
+      <strong>Cancelling or correcting</strong>
+      Press <code>ESC</code> at any of the three prompts to cancel without changing
+      anything. If the two new passwords don't match, you'll see
+      <em>"passwords do not match — try again"</em> and you can rerun
+      <code>PASSWORD</code> from the start.
+    </div>
+
+    <h2 id="delete"><span class="step-num">7</span> Delete Account</h2>
+    <p>
+      Type <code>DELETEACCOUNT</code> at the prompt. You'll see a warning, then be
+      asked to type your username and enter your password to confirm.
+    </p>
+
+<pre><code><span class="ck">]</span> <span class="cg">DELETEACCOUNT</span>
+<span class="cm">WARNING: This will archive your account.</span>
+<span class="cm">  - You will be logged out everywhere</span>
+<span class="cm">  - Your username will be freed for re-registration</span>
+<span class="cm">  - Your data is preserved (admin can restore later)</span>
+<span class="cm">Press ESC at any prompt to cancel.</span>
+Type your username to confirm: alice
+Enter password to confirm: <span class="star">******</span>
+<span class="cm">Account archived: alice</span>
+<span class="cm">You have been logged out. Your LOCAL data has returned.</span></code></pre>
+
+    <div class="callout callout-danger">
+      <strong>This is a serious action</strong>
+      Although your data is preserved on the server (so an administrator can restore
+      it on request), you will be immediately logged out on every device, and your
+      username will be released so anyone else can register it. Make sure this is
+      what you want before confirming.
+    </div>
+
+    <h3>What Actually Happens</h3>
+    <ul>
+      <li>You are logged out on <strong>every</strong> device where this account was active</li>
+      <li>The username is freed up — someone else (or you) can register it again</li>
+      <li>Your programs, files, and data are preserved server-side and can be restored by an administrator</li>
+      <li>Your LOCAL sandbox returns — the work you had before logging in is back</li>
+    </ul>
+
+    <div class="callout callout-success">
+      <strong>If you typed the wrong username</strong>
+      You'll see <em>"username does not match — cancelled"</em> and your account is
+      completely untouched. Pressing <code>ESC</code> at either prompt also cancels
+      safely with no changes.
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         REFERENCE
+         ══════════════════════════════════════════════════════ -->
+
+    <div class="section-banner">
+      <div class="icon">📋</div>
+      <div>
+        <h1>Reference</h1>
+        <p>Quick command lookup and common questions.</p>
+      </div>
+    </div>
+
+    <h2 id="quick-ref"><span class="step-num">8</span> Command Reference</h2>
+
+    <table>
+      <tr><th>Command</th><th>What It Does</th></tr>
+      <tr>
+        <td><code>REGISTER "user"</code></td>
+        <td>Create an account (prompts for password)</td>
+      </tr>
+      <tr>
+        <td><code>LOGIN "user"</code></td>
+        <td>Sign in to an existing account (prompts for password)</td>
+      </tr>
+      <tr>
+        <td><code>LOGOUT</code></td>
+        <td>Sign out and return to LOCAL mode</td>
+      </tr>
+      <tr>
+        <td><code>WHOAMI</code></td>
+        <td>Print current account, or "local"</td>
+      </tr>
+      <tr>
+        <td><code>PASSWORD</code></td>
+        <td>Change own password (3 masked prompts)</td>
+      </tr>
+      <tr>
+        <td><code>DELETEACCOUNT</code></td>
+        <td>Archive own account and log out everywhere</td>
+      </tr>
+    </table>
+
+    <p>
+      For full BASIC documentation, type <code>HELP</code> at the OSAWARE prompt.
+      For more on accounts specifically, type <code>HELP AUTH</code>.
+    </p>
+
+    <h2 id="troubleshooting"><span class="step-num">9</span> Troubleshooting</h2>
+
+    <h3>"username already taken"</h3>
+    <p>
+      Someone else has already registered that name. Pick another. Usernames are
+      first-come-first-served and there's no way to claim one that's in use, even
+      if it appears inactive.
+    </p>
+
+    <h3>"invalid credentials"</h3>
+    <p>
+      The username and password combination doesn't match anything in the system.
+      Double-check both — usernames are case-sensitive in the database, and so are
+      passwords.
+    </p>
+
+    <h3>"new password must differ from current password"</h3>
+    <p>
+      The <code>PASSWORD</code> command rejects an unchanged password. Pick something
+      genuinely new.
+    </p>
+
+    <h3>I changed my password and now another browser tab is signed out</h3>
+    <p>
+      That's expected. Changing your password invalidates all sessions except the
+      one you used to make the change. Just sign in again on the other device with
+      the new password.
+    </p>
+
+    <h3>I deleted my account by mistake</h3>
+    <p>
+      Your data is preserved on the server. Contact an administrator to request a
+      restore. The username, however, may have been claimed by someone else in the
+      interim — restoration will use a different username if needed.
+    </p>
+
+    <hr>
+
+    <p style="text-align: center; color: var(--muted); font-size: 13px; margin-top: 40px;">
+      OSAWARE &middot; <a href="https://www.osaware.com/" style="color: var(--accent); text-decoration: none;">www.osaware.com</a>
+    </p>
+
+  </main>
+</div>
+</body>
+</html>

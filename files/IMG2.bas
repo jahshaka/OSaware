@@ -1,0 +1,26 @@
+5 REM ** IMG2 - VFS Image Slideshow **
+10 CLS : COLOUR 3
+15 PRINT "Loading VFS images..."
+20 LOADIMG "check",   "DEMO/CHECKERBOARD.PNG"
+21 LOADIMG "grad",    "DEMO/GRADIENT.PNG"
+22 LOADIMG "smiley",  "DEMO/SMILEY.PNG"
+23 LOADIMG "pal",     "DEMO/PALETTE.PNG"
+24 LOADIMG "stone",   "MAZE3D/STONE.PNG"
+25 LOADIMG "floor",   "MAZE3D/FLOOR.PNG"
+26 LOADIMG "ceil",    "MAZE3D/CEIL.PNG"
+30 DATA "check","grad","smiley","pal","stone","floor","ceil"
+35 DMAX = 7
+40 DIM NM$(7)
+45 FOR I=1 TO DMAX : READ NM$(I) : NEXT I
+50 PRINT "Done! Press Q to quit."
+60 CLS
+100 REM ** Main loop **
+110 K = INKEY : IF K=81 OR K=113 THEN END
+120 R = INT(RND(1)*DMAX)+1
+130 X = INT(RND(1)*(WIDTH-120))
+140 Y = INT(RND(1)*(HEIGHT-120))
+150 SX = INT(RND(1)*180)+60
+160 SY = INT(RND(1)*180)+60
+170 DISPLAY NM$(R), X, Y, SX, SY
+180 SLEEP 800
+190 GOTO 110

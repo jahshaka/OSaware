@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>OSAWARE &mdash; Intelligent Operating System</title>
+  <link rel="stylesheet" href="core/style.css?v=1775956621">
+</head>
+<body>
+  <div id="header">OSAWARE &mdash; Intelligent Operating System</div>
+  <div id="header-mobile">
+    <div>The Online Operating System &bull; Powered by OSaware v7 Alpha</div>
+    <div>Geekprocessor &bull; <a href="docs/OSAWARE_V7_Architecture.pdf" target="_blank" tabindex="-1" style="color:inherit">VIEW ARCH</a> &bull; <a href="docs/OSAWARE_BASIC_Manual.pdf" target="_blank" tabindex="-1" style="color:inherit">VIEW DOCS</a></div>
+  </div>
+
+  <div id="terminal-wrapper">
+    <canvas id="kanvas"></canvas>
+    <div id="oEmulator_div"></div>
+  </div>
+
+  <div id="footer">
+    <code>HELP</code> command list &bull;
+    <code>LOAD *</code> programs &bull;
+    <code>RUN MENU</code> launch the menu &bull;
+    <a href="docs/OSAWARE_Accounts_Guide.html" target="_blank" tabindex="-1">ACCOUNTS</a> &bull;
+    <a href="docs/OSAWARE_BASIC_Manual.pdf" target="_blank" tabindex="-1">VIEW DOCS</a> &bull;
+    <a href="docs/OSAWARE_V7_Architecture.pdf" target="_blank" tabindex="-1">VIEW ARCH</a> &bull;
+    <a href="#" id="fs-toggle" tabindex="-1">FULLSCREEN</a> &bull;
+    <a href="#" id="os-toggle" tabindex="-1">OVERSCAN</a>
+  </div>
+  <div id="footer-mobile">
+    <a href="#" id="fs-toggle-mobile" tabindex="-1">FULLSCREEN</a> &bull;
+    <a href="docs/OSAWARE_Accounts_Guide.html" target="_blank" tabindex="-1">ACCOUNTS</a> &bull;
+    <a href="docs/OSAWARE_BASIC_Manual.pdf" target="_blank" tabindex="-1">DOCS</a> &bull;
+    <a href="docs/OSAWARE_V7_Architecture.pdf" target="_blank" tabindex="-1">ARCH</a>
+  </div>
+
+  <!-- Hidden input to capture mobile keyboard -->
+  <input id="mobile-input" type="text" autocomplete="off" autocorrect="off"
+         autocapitalize="none" spellcheck="false" aria-hidden="true">
+
+  <!-- Three.js r128 — GL 3D backend -->
+  <!-- Download three.min.js to core/ for offline use, or rely on CDN -->
+  <script src="core/three.min.js"></script>
+  <!-- Core modules -->
+  <script src="core/constants.js?v=1775956621"></script>
+  <script src="core/kernel/bus.js?v=1775956621"></script>
+  <script src="core/kernel/process_memory.js?v=1775956621"></script>
+  <script src="core/kernel/kernel.js?v=1775956621"></script>
+  <script src="core/shell.js?v=1775956621"></script>
+  <script src="core/libraries.js?v=1775956621"></script>
+  <script src="core/storage/local_provider.js?v=1775956621"></script>
+  <script src="core/storage/mock_remote_provider.js?v=1775956621"></script>
+  <script src="core/storage/remote_provider.js?v=1775956621"></script>
+  <script src="core/auth/auth_service.js?v=1775956621"></script>
+  <script src="core/vfs.js?v=1775956621"></script>
+  <script src="core/drivers/terminal.js?v=1775956621"></script>
+  <script src="core/drivers/gl3d.js?v=1775956621"></script>
+  <script src="core/drivers/gfx.js?v=1775956621"></script>
+  <script src="core/drivers/audio.js?v=1775956621"></script>
+  <script src="core/drivers/net.js?v=1775956621"></script>
+  <script src="core/drivers/window.js?v=1775956621"></script>
+  <script src="core/kernel.js?v=1775956621"></script>
+  <script src="core/compiler.js?v=1775956621"></script>
+  <script src="core/boot.js?v=1775956621"></script>
+  <script src="core/ui.js?v=1775956621"></script>
+</body>
+</html>

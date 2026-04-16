@@ -1,0 +1,77 @@
+0 REM *****************************************************
+1 REM ** SGIDEMO — Silicon Graphics Necker Cube Logo    **
+2 REM ** Wireframe cube of thick tubes with corner gaps **
+3 REM *****************************************************
+10 CLS : COLOUR 3
+20 PRINT "SGI LOGO DEMO"
+30 PRINT "Silicon Graphics Necker Cube"
+40 PRINT "Press W=wireframe  S=solid  Q=quit"
+50 SLEEP 2000
+60 GL.INIT
+80 GL.PERSPECTIVE 45
+90 GL.CAMERA 0, 0, -7
+100 GL.LOOKAT 0, 0, 0
+110 REM === Build the 12-tube mesh from DATA ===
+120 GL.BEGIN
+130 REM T=tube half-thickness, L=tube half-length
+140 T=0.13 : L=0.82
+150 FOR I=1 TO 12
+160   READ CX,CY,CZ,AX
+170   REM -- Generate 8 vertices for this tube
+180   FOR S0=-1 TO 1 STEP 2
+190     FOR S1=-1 TO 1 STEP 2
+200       FOR S2=-1 TO 1 STEP 2
+210         IF AX=0 THEN GL.VERTEX CX+S0*L, CY+S1*T, CZ+S2*T
+220         IF AX=1 THEN GL.VERTEX CX+S1*T, CY+S0*L, CZ+S2*T
+230         IF AX=2 THEN GL.VERTEX CX+S1*T, CY+S2*T, CZ+S0*L
+240       NEXT S2
+250     NEXT S1
+260   NEXT S0
+270   REM -- 6 faces using 1-based index, B=base of this tube
+280   B=(I-1)*8+1
+290   GL.FACE B,B+2,B+3,B+1
+300   GL.FACE B+4,B+5,B+7,B+6
+310   GL.FACE B,B+1,B+5,B+4
+320   GL.FACE B+2,B+6,B+7,B+3
+330   GL.FACE B,B+4,B+6,B+2
+340   GL.FACE B+1,B+3,B+7,B+5
+350 NEXT I
+360 GL.END
+370 LOGO=GL.MESHID
+380 REM === Tilt to classic SGI corner view ===
+390 REM (45° Y + 35.26° X = isometric corner-on view)
+400 GL.ROTATE LOGO, 35, 45, 0
+410 REM === Render loop ===
+420 MODE=1 : REM 1=solid, 0=wire
+430 GOSUB 6000
+440 ANG=0 : SPIN=0.6
+500 K=INKEY
+510 IF K=81 OR K=113 OR K=27 THEN GOTO 900
+520 IF K=87 OR K=119 THEN MODE=0 : GOSUB 6000
+530 IF K=83 OR K=115 THEN MODE=1 : GOSUB 6000
+540 GL.CLS 5,5,20
+550 GL.ROTATE LOGO, 35+ANG*0.3, 45+ANG, 0
+560 GL.DRAW LOGO
+570 ANG=ANG+SPIN
+580 IF ANG>=360 THEN ANG=ANG-360
+590 SLEEP 16
+600 GOTO 500
+900 COLOUR 3 : CLS : PRINT "SGI demo ended."
+910 END
+5000 REM == EDGE DATA: cx,cy,cz,axis (0=X 1=Y 2=Z) ==
+5010 DATA 0,-1,-1,0
+5020 DATA 0,-1,1,0
+5030 DATA -1,-1,0,2
+5040 DATA 1,-1,0,2
+5050 DATA 0,1,-1,0
+5060 DATA 0,1,1,0
+5070 DATA -1,1,0,2
+5080 DATA 1,1,0,2
+5090 DATA -1,0,-1,1
+5100 DATA 1,0,-1,1
+5110 DATA 1,0,1,1
+5120 DATA -1,0,1,1
+5130 RETURN
+6000 REM == SET RENDER MODE ==
+6010 IF MODE=0 THEN GL.WIRE : GL.COLOUR 100,200,255
+6020 IF MODE=1 THEN GL.SOLID : GL.LIGHT 1,2,-1 : GL.AMBIENT 0.2 : GL.COLOUR 160,180,220
