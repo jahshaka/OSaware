@@ -1,6 +1,6 @@
-# OSAWARE BASIC
+# OSAWARE
 
-OSAWARE V7 is a fully browser-based operating system that gives
+OSAWARE is a fully browser-based operating system that gives
 anyone with a web browser access to a threaded, memory-safe,
 multi-process computing environment — no installation, no
 configuration, no prior programming experience required.
