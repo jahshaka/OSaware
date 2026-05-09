@@ -4380,7 +4380,7 @@ class VirtualFs {
                                'VFSTEST2','VFSTESTPROG','VFSAUTHTEST','VFSREALTEST','VFSPUTDBG','AUDIOTEST','PROFILER']);
         const TOOLS = new Set(['SSH','TODO','LOGO','QUINE','LOGODEV','HUGO',
                                'MOUSE','VIEWER','SUBTEST','DATATEST']);
-        const SKIP  = new Set(['MENU','MAZE3D']);
+        const SKIP  = new Set(['MENU']);
 
         // Programs only (array entries)
         const allNames = this._files
