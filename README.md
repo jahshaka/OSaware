@@ -10,7 +10,7 @@ using their own isolated processes with access to 3D graphics,
 audio synthesis, real-time networking, and direct AI integration —
 all using a language as simple and readable as plain English.
 
-## Quick Start
+## Quick Start V1
 
 ### Option 1 — Run locally, no server needed
 
