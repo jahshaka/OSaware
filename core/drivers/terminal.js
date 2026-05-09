@@ -1295,7 +1295,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1778364303';
+                    return '1778369228';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,
