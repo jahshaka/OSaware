@@ -1016,7 +1016,11 @@ class GL3DDriver {
     cmdGL_LIGHTSOFF() {
         const g = this._glState();
         if (g.three && g.pointLights) {
-            for (const l of g.pointLights) g.three.scene.remove(l);
+            for (const l of g.pointLights) {
+                if (l.shadow && l.shadow.map) l.shadow.map.dispose();
+                l.dispose();
+                g.three.scene.remove(l);
+            }
             g.pointLights = [];
         }
         return CMD_OK;
