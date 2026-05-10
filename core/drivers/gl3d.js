@@ -1041,6 +1041,35 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+// GL.DISPOSE id — completely remove and free a mesh and all its GPU resources
+    cmdGL_DISPOSE(param) {
+        const g = this._glState();
+        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
+        const m = g.meshes[id];
+        if (!m) return CMD_OK;
+        if (m._threeObjects) {
+            const t = g.three;
+            for (const obj of m._threeObjects) {
+                if (t && t.scene) t.scene.remove(obj);
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    const mat = obj.material;
+                    if (mat.map)             mat.map.dispose();
+                    if (mat.normalMap)       mat.normalMap.dispose();
+                    if (mat.roughnessMap)    mat.roughnessMap.dispose();
+                    if (mat.aoMap)           mat.aoMap.dispose();
+                    if (mat.displacementMap) mat.displacementMap.dispose();
+                    if (mat.metalnessMap)    mat.metalnessMap.dispose();
+                    if (mat.emissiveMap)     mat.emissiveMap.dispose();
+                    if (mat.envMap)          mat.envMap.dispose();
+                    mat.dispose();
+                }
+            }
+        }
+        delete g.meshes[id];
+        return CMD_OK;
+    }
+
 // GL.SHOW id — make a previously hidden mesh visible again
     cmdGL_SHOW(param) {
         const g = this._glState();

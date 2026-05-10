@@ -1790,6 +1790,7 @@ class ShellRuntime {
                 'VISIBILITY',
                 '  GL.HIDE id            Remove mesh from scene (retains definition)',
                 '  GL.SHOW id            Re-add a hidden mesh',
+                '  GL.DISPOSE id         Free a mesh + its GPU resources (permanent)',
                 '',
                 'TEXTURES & PBR MATERIALS',
                 '  GL.TEXTURE id,name$[,repeat]',

@@ -2610,6 +2610,7 @@ class Interpreter {
         bus.on('gl.pointlight',        (m) => gl.cmdGL_POINTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
+        bus.on('gl.dispose',           (m) => gl.cmdGL_DISPOSE(m.param));
         bus.on('gl.show',              (m) => gl.cmdGL_SHOW(m.param));
         bus.on('gl.fog',               (m) => gl.cmdGL_FOG(m.param));
         bus.on('gl.fogoff',            ()  => gl.cmdGL_FOGOFF());
@@ -2729,6 +2730,7 @@ class Interpreter {
     cmdGL_POINTLIGHT(p)        { return this.kernel.post({syscall:'gl.pointlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
+    cmdGL_DISPOSE(p)           { return this.kernel.post({syscall:'gl.dispose',param:p}); }
     cmdGL_SHOW(p)              { return this.kernel.post({syscall:'gl.show',param:p}); }
     cmdGL_FOG(p)               { return this.kernel.post({syscall:'gl.fog',param:p}); }
     cmdGL_FOGOFF()             { return this.kernel.post({syscall:'gl.fogoff'}); }
@@ -3193,6 +3195,7 @@ class Interpreter {
             ['GL.POINTLIGHT',  0,  (p) => this.cmdGL_POINTLIGHT(p),    1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
+            ['GL.DISPOSE',     0,  (p) => this.cmdGL_DISPOSE(p),     1],
             ['GL.SHOW',        0,  (p) => this.cmdGL_SHOW(p),        1],
             ['GL.FOG',         0,  (p) => this.cmdGL_FOG(p),           1],
             ['GL.FOGOFF',      0,  ()  => this.cmdGL_FOGOFF()],
