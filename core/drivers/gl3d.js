@@ -1047,6 +1047,31 @@ class GL3DDriver {
         const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
         const m = g.meshes[id];
         if (!m) return CMD_OK;
+        // Loaded models (GL.LOAD) are a Three.js Group hierarchy — walk it and
+        // free every child mesh's geometry/material/textures, plus the animation mixer.
+        if (m._isLoaded && m._threeObjects && m._threeObjects[0] && m._threeObjects[0].traverse) {
+            const t = g.three;
+            const model = m._threeObjects[0];
+            if (t && t.scene) t.scene.remove(model);
+            model.traverse((c) => {
+                if (c.isMesh) {
+                    if (c.geometry) c.geometry.dispose();
+                    const mats = Array.isArray(c.material) ? c.material : (c.material ? [c.material] : []);
+                    for (const mat of mats) {
+                        if (mat.map)          mat.map.dispose();
+                        if (mat.normalMap)    mat.normalMap.dispose();
+                        if (mat.roughnessMap) mat.roughnessMap.dispose();
+                        if (mat.metalnessMap) mat.metalnessMap.dispose();
+                        if (mat.aoMap)        mat.aoMap.dispose();
+                        if (mat.emissiveMap)  mat.emissiveMap.dispose();
+                        mat.dispose();
+                    }
+                }
+            });
+            if (m._mixer) { try { m._mixer.stopAllAction(); } catch (e) {} m._mixer = null; }
+            delete g.meshes[id];
+            return CMD_OK;
+        }
         if (m._threeObjects) {
             const t = g.three;
             for (const obj of m._threeObjects) {
@@ -1179,6 +1204,62 @@ class GL3DDriver {
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
+        return CMD_OK;
+    }
+
+// GL.LOAD url$ — load a GLTF (.gltf) / GLB (.glb) model and add it to the scene.
+// Only GLTF/GLB is supported (not OBJ/FBX/STL).  Sets GL.MESHID to the loaded
+// model's id, so GL.TRANSLATE/ROTATE/SCALE/HIDE/DISPOSE work on it.  Loading is
+// async, so the interpreter is paused (host._glLoadPending) until the model is
+// ready, then resumed — that way the line after GL.LOAD sees the right GL.MESHID.
+    cmdGL_LOAD(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        // Resolve the url argument: "literal" string or a string variable.
+        let url = this.trim(String(param || ''));
+        if (url.startsWith('"') && url.endsWith('"')) url = url.slice(1, -1);
+        else url = String(this.lookup_(ASS_STRING, url.toUpperCase()) || url);
+        url = url.trim();
+        if (!url) return CMD_ESYNTAX;
+        if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
+            this.appendLine('GL.LOAD: GLTFLoader not available', 1);
+            return CMD_OK;
+        }
+        const host = this._host;
+        host._glLoadPending = true;
+        const resume = () => { host._glLoadPending = false; if (host.running) host.tick(1); };
+        const loader = new THREE.GLTFLoader();
+        loader.load(url,
+            (gltf) => {
+                try {
+                    const model = gltf.scene;
+                    model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+                    t.scene.add(model);
+                    const id = g.nextId++;
+                    const fm = { id, verts: [], faces: [], colour: [255, 255, 255],
+                        shine: 30, alpha: 1.0, emissive: [0, 0, 0],
+                        tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1,
+                        _threeObjects: [model], _builtMode: g.mode, _isSphere: true, _isLoaded: true };
+                    if (gltf.animations && gltf.animations.length > 0) {
+                        fm._animations = gltf.animations;
+                        fm._mixer = new THREE.AnimationMixer(model);
+                    }
+                    g.meshes[id] = fm;
+                    g.lastId = id;
+                } catch (e) {
+                    this.appendLine('GL.LOAD: error placing model — ' + e.message, 1);
+                    if (typeof console !== 'undefined') console.error('GL.LOAD place error:', e);
+                }
+                resume();
+            },
+            () => {},
+            (err) => {
+                this.appendLine('GL.LOAD error: ' + (err && err.message ? err.message : url), 1);
+                if (typeof console !== 'undefined') console.error('GL.LOAD error loading', url, err);
+                resume();
+            }
+        );
         return CMD_OK;
     }
 

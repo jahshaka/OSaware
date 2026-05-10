@@ -67,6 +67,7 @@ class Interpreter {
         this._collisionEnabled = false;
         this._onCollisionLine  = null;  // line number of ON COLLISION handler
         this._collisionPending = false; // flag for tick() to fire event handler
+        this._glLoadPending    = false; // true while GL.LOAD is fetching a model — tick() pauses
         this._objClip          = null;  // clipping rectangle
         this._objAnimTimer     = null;  // setInterval handle
 
@@ -2616,6 +2617,7 @@ class Interpreter {
         bus.on('gl.fogoff',            ()  => gl.cmdGL_FOGOFF());
         bus.on('gl.sphere',            (m) => gl.cmdGL_SPHERE(m.param));
         bus.on('gl.box',               (m) => gl.cmdGL_BOX(m.param));
+        bus.on('gl.load',              (m) => gl.cmdGL_LOAD(m.param));
         bus.on('gl.chrome',            (m) => gl.cmdGL_CHROME(m.param));
         bus.on('gl.debug',             ()  => gl.cmdGLDEBUG());
 
@@ -2736,6 +2738,7 @@ class Interpreter {
     cmdGL_FOGOFF()             { return this.kernel.post({syscall:'gl.fogoff'}); }
     cmdGL_SPHERE(p)            { return this.kernel.post({syscall:'gl.sphere',param:p}); }
     cmdGL_BOX(p)               { return this.kernel.post({syscall:'gl.box',param:p}); }
+    cmdGL_LOAD(p)              { return this.kernel.post({syscall:'gl.load',param:p}); }
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
 
 
@@ -3201,6 +3204,7 @@ class Interpreter {
             ['GL.FOGOFF',      0,  ()  => this.cmdGL_FOGOFF()],
             ['GL.SPHERE',      0,  (p) => this.cmdGL_SPHERE(p),        1],
             ['GL.BOX',         0,  (p) => this.cmdGL_BOX(p),           1],
+            ['GL.LOAD',        0,  (p) => this.cmdGL_LOAD(p),          1],
             ['GL.CHROME',      0,  (p) => this.cmdGL_CHROME(p),        1],
             ['GL.NORMALMAP',   0,  (p) => this.cmdGL_NORMALMAP(p),     1],
             ['GL.ROUGHMAP',    0,  (p) => this.cmdGL_ROUGHMAP(p),      1],
@@ -3902,7 +3906,7 @@ class Interpreter {
     // FIX: bounds check added before the skip-empty-lines loop.
     // -----------------------------------------------------------------------
     tick(a) {
-        if (this.want_keypress || this.want_input) return;
+        if (this.want_keypress || this.want_input || this._glLoadPending) return;
 
         // Check for pending ON COLLISION GOSUB event (set by the animation timer).
         if (this._collisionPending && this._onCollisionLine && this.running &&
@@ -3993,7 +3997,7 @@ class Interpreter {
             for (let _b = 0; _b < 100000 && this.running && !iStopped; _b++) {
                 if (_batchDeadline > 0 && (_b & 63) === 0 && performance.now() > _batchDeadline) break;
                 // Check yield conditions BEFORE executing each statement.
-                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress) break;
+                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress || this._glLoadPending) break;
                 if (this.line_remaining !== '') break;
                 if (this.lines[this.run_line] !== '') {
                     if (this._trace) this.appendLine('[' + this.run_line + ']', 0);
