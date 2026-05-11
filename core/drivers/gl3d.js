@@ -122,6 +122,7 @@ class GL3DDriver {
             wireColor:  null,     // edge colour for SOLIDWIRE (null = auto)
             fog:        null,     // {r,g,b,near,far} or null
             emissive:   [0,0,0],  // emissive colour
+            forceWire:  false,    // GL.WIREALL — render every mesh as unlit wireframe
         };
     }
 
@@ -422,6 +423,16 @@ class GL3DDriver {
             obj.scale.set(mesh.sx||1, mesh.sy||1, mesh.sz||1);
             t.scene.add(obj);
         }
+        // Honour GL.WIREALL for meshes (re)built while wireframe-everything is active
+        if (g.forceWire) {
+            for (const obj of mesh._threeObjects) {
+                obj.traverse(o => {
+                    if (!o.material) return;
+                    const mats = Array.isArray(o.material) ? o.material : [o.material];
+                    for (const m of mats) if (m && 'wireframe' in m) m.wireframe = true;
+                });
+            }
+        }
     }
 
 // ---- GL Commands ---- (BASIC API — unchanged from software renderer) ----
@@ -543,13 +554,43 @@ class GL3DDriver {
 
     cmdGL_COLOUR(param) {
         const p = this._glParseFloats(param, 3);
-        this._glState().colour = [Math.round(p[0]||255), Math.round(p[1]||255), Math.round(p[2]||255)];
+        const c = v => Math.max(0, Math.min(255, Math.round(v || 0)));
+        // NOTE: 0 is a valid channel value — do NOT default it to 255 (that turned
+        // GL.COLOUR 0,0,0 white and GL.COLOUR 0,n,n pink/magenta).
+        this._glState().colour = [c(p[0]), c(p[1]), c(p[2])];
         return CMD_OK;
     }
 
     cmdGL_WIRE()      { this._glState().mode = 'wire';      return CMD_OK; }
     cmdGL_SOLID()     { this._glState().mode = 'solid';     return CMD_OK; }
     cmdGL_SOLIDWIRE() { this._glState().mode = 'solidwire'; return CMD_OK; }
+
+    // GL.WIREALL flag — 1: render every mesh in the scene as a wireframe with no
+    // lighting (full ambient, directional light off);  0: restore shading + lights.
+    cmdGL_WIREALL(param) {
+        const flag = !!Math.round(Number(this.evalCalc(this.trim(String(param||'0')), ASS_NUMBER)));
+        const g = this._glState();
+        g.forceWire = flag;
+        const t = g.three;
+        if (t && t.scene) {
+            t.scene.traverse(obj => {
+                if (!obj.material) return;
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const m of mats) if (m && 'wireframe' in m) m.wireframe = flag;
+            });
+            if (flag) {
+                if (t._savedAmbInt === undefined && t.ambientLight) t._savedAmbInt = t.ambientLight.intensity;
+                if (t._savedDirInt === undefined && t.dirLight)     t._savedDirInt = t.dirLight.intensity;
+                if (t.ambientLight) t.ambientLight.intensity = 1.0;
+                if (t.dirLight)     t.dirLight.intensity     = 0;
+            } else {
+                if (t.ambientLight && t._savedAmbInt !== undefined) t.ambientLight.intensity = t._savedAmbInt;
+                if (t.dirLight     && t._savedDirInt !== undefined) t.dirLight.intensity     = t._savedDirInt;
+                t._savedAmbInt = undefined; t._savedDirInt = undefined;
+            }
+        }
+        return CMD_OK;
+    }
 
     cmdGL_LIGHT(param) {
         const p = this._glParseFloats(param, 3);
@@ -729,7 +770,8 @@ class GL3DDriver {
 // GL.WIRECOLOR r,g,b — set edge colour for SOLIDWIRE mode
     cmdGL_WIRECOLOR(param) {
         const p = this._glParseFloats(param, 3);
-        this._glState().wireColor = [Math.round(p[0]||255), Math.round(p[1]||255), Math.round(p[2]||255)];
+        const c = v => Math.max(0, Math.min(255, Math.round(v || 0)));
+        this._glState().wireColor = [c(p[0]), c(p[1]), c(p[2])];
         return CMD_OK;
     }
 
@@ -855,18 +897,30 @@ class GL3DDriver {
 // Used WITH GL.EMISSIVEMAP to tint the emissive map colour.
     cmdGL_EMISSIVE(param) {
         const g = this._glState();
+        const c = v => Math.max(0, Math.min(255, Math.round(v || 0)));
+        const ntok = String(param || '').split(',').length;
+        if (ntok <= 3) {
+            // GL.EMISSIVE r,g,b — self-glow colour for subsequently built meshes
+            const p = this._glParseFloats(param, 3);
+            g.emissive = [c(p[0]), c(p[1]), c(p[2])];
+            return CMD_OK;
+        }
+        // GL.EMISSIVE id, r, g, b — recolour an existing mesh's emissive (used with GL.EMISSIVEMAP)
         const p = this._glParseFloats(param, 4);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
         if (!m) return CMD_OK;
-        const r = (p[1]||0)/255, gv = (p[2]||0)/255, b = (p[3]||0)/255;
-        m.emissiveColor = [p[1]||0, p[2]||0, p[3]||0];
+        const r = c(p[1])/255, gv = c(p[2])/255, b = c(p[3])/255;
+        m.emissiveColor = [c(p[1]), c(p[2]), c(p[3])];
         if (m._threeObjects) {
             for (const obj of m._threeObjects) {
-                if (obj.material && obj.material.emissive) {
-                    obj.material.emissive.setRGB(r, gv, b);
-                    obj.material.needsUpdate = true;
-                }
+                obj.traverse(o => {
+                    if (!o.material) return;
+                    const mats = Array.isArray(o.material) ? o.material : [o.material];
+                    for (const mm of mats) {
+                        if (mm && mm.emissive) { mm.emissive.setRGB(r, gv, b); mm.needsUpdate = true; }
+                    }
+                });
             }
         }
         return CMD_OK;
@@ -994,12 +1048,15 @@ class GL3DDriver {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 8);
-        const r  = p[3] !== undefined && p[3] > 0 ? p[3]/255 : 1;
-        const gv = p[4] !== undefined ? p[4]/255 : 1;
-        const b  = p[5] !== undefined ? p[5]/255 : 1;
-        const intensity = p[6] !== undefined ? p[6] : 2;
-        const distance  = p[7] !== undefined ? p[7] : 10; // 0=infinite
+        const cc = v => Math.max(0, Math.min(255, v)) / 255;
+        // r/g/b default to white only when actually omitted (0 is a valid channel)
+        const r  = ntok > 3 ? cc(p[3]) : 1;
+        const gv = ntok > 4 ? cc(p[4]) : 1;
+        const b  = ntok > 5 ? cc(p[5]) : 1;
+        const intensity = ntok > 6 ? p[6] : 2;
+        const distance  = ntok > 7 ? p[7] : 10; // 0=infinite
         const light = new THREE.PointLight(new THREE.Color(r, gv, b), intensity, distance, 1);
         light.position.set(p[0]||0, p[1]||0, p[2]||0);
         light.castShadow            = true;

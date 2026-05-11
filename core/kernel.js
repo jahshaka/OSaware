@@ -2582,6 +2582,7 @@ class Interpreter {
         bus.on('gl.wire',              ()  => gl.cmdGL_WIRE());
         bus.on('gl.solid',             ()  => gl.cmdGL_SOLID());
         bus.on('gl.solidwire',         ()  => gl.cmdGL_SOLIDWIRE());
+        bus.on('gl.wireall',           (m) => gl.cmdGL_WIREALL(m.param));
         bus.on('gl.light',             (m) => gl.cmdGL_LIGHT(m.param));
         bus.on('gl.ambient',           (m) => gl.cmdGL_AMBIENT(m.param));
         bus.on('gl.begin',             ()  => gl.cmdGL_BEGIN());
@@ -2703,6 +2704,7 @@ class Interpreter {
     cmdGL_WIRE()               { return this.kernel.post({syscall:'gl.wire'}); }
     cmdGL_SOLID()              { return this.kernel.post({syscall:'gl.solid'}); }
     cmdGL_SOLIDWIRE()          { return this.kernel.post({syscall:'gl.solidwire'}); }
+    cmdGL_WIREALL(p)           { return this.kernel.post({syscall:'gl.wireall',param:p}); }
     cmdGL_LIGHT(p)             { return this.kernel.post({syscall:'gl.light',param:p}); }
     cmdGL_AMBIENT(p)           { return this.kernel.post({syscall:'gl.ambient',param:p}); }
     cmdGL_BEGIN()              { return this.kernel.post({syscall:'gl.begin'}); }
@@ -3187,6 +3189,7 @@ class Interpreter {
             ['GL.DRAW',        0,  (p) => this.cmdGL_DRAW(p),          1],
             ['GL.FACE',        0,  (p) => this.cmdGL_FACE(p),          1],
             ['GL.WIRE',        0,  ()  => this.cmdGL_WIRE()],
+            ['GL.WIREALL',     0,  (p) => this.cmdGL_WIREALL(p),       1],
             ['GL.INIT',        0,  ()  => this.cmdGL_INIT()],
             ['GL.CLOSE',       0,  ()  => this.cmdGL_CLOSE()],
             ['GLDEBUG',        0,  ()  => this.cmdGLDEBUG(),         1],

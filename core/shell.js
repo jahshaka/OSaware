@@ -1758,6 +1758,7 @@ class ShellRuntime {
                 '  GL.WIRE              Wireframe edges only',
                 '  GL.SOLID             Solid Phong shading',
                 '  GL.SOLIDWIRE         Solid Phong + edge outlines',
+                '  GL.WIREALL flag      1: every mesh -> unlit wireframe   0: restore',
                 '',
                 'LIGHTING',
                 '  GL.LIGHT lx,ly,lz               Directional light',
