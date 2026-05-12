@@ -3627,7 +3627,7 @@ class VirtualFs {
                 [6280, 'IF TURN<0-TRATE THEN TURN=0-TRATE'],
                 [6281, 'IF FWD<0 AND ABS(CROSS)<0.05 THEN TURN=TRATE'],
                 [6282, 'CUBEYAW2=CUBEYAW2+TURN*DT'],
-                [6283, 'DX2=COS(CUBEYAW2)*SPDCUR*1.035*DT : DZ2=SIN(CUBEYAW2)*SPDCUR*1.035*DT'],
+                [6283, 'DX2=COS(CUBEYAW2)*SPDCUR*0.93*DT : DZ2=SIN(CUBEYAW2)*SPDCUR*0.93*DT'],
                 [6284, 'NX2=PX2+DX2 : NZ2=PZ2+DZ2 : MM=0.35'],
                 [6285, 'RR1=INT((NZ2-MM)/CELL) : RR2=INT((NZ2+MM)/CELL) : CC1=INT((NX2-MM)/CELL) : CC2=INT((NX2+MM)/CELL)'],
                 [6286, 'IF RR1<0 OR RR2>=MZ OR CC1<0 OR CC2>=MZ THEN GOTO TPSlideX'],
