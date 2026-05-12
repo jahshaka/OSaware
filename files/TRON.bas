@@ -1,21 +1,22 @@
-0 REM TRON V1 - Lightcycle in empty arena (no trail yet)
-1 REM Mouse=turn  W/Up=fwd  S=auto-run  SPACE=jump  C=cam  Q=quit
+0 REM TRON - lightcycle arena. Start menu: D=demo  2=two-player  any key=play  Q/Esc=quit
+1 REM In-game: mouse turns, W/Up forward, A auto-run, Space jump, C cam ... Q/Esc back to menu
+2 StartMenu:
 5 CLS : COLOUR 3
-6 PRINT "TRON V1"
-7 PRINT ""
-8 PRINT "Navigate the arena."
-9 PRINT ""
-10 PRINT "  Mouse left/right   Turn"
-11 PRINT "  W or Up            Move forward"
-12 PRINT "  A                  Toggle auto-run"
-13 PRINT "  SPACE              Jump"
-14 PRINT "  C=cam Z=wire B=bloom G=aa S=stats T=turn"
-15 PRINT "  L=lights   F=fog   M=map   Q=quit"
-16 PRINT "  d = DEMO    2 = 2-PLAYER    -    any other key = PLAY"
-17 DK=GETKEY()
-18 FULLSCREEN ON
-19 UI OFF
-20 REM === Constants ===
+6 PRINT "  T R O N    -    Lightcycle Arena"
+7 COLOUR 7
+8 PRINT ""
+9 PRINT "  Mouse: turn      W or Up: forward      Space: jump"
+10 PRINT "  A: auto-run   C: camera   M: map   L: lights   F: fog"
+11 PRINT "  Z: wire    B: bloom    G: anti-alias    S: fps"
+12 PRINT "  Q  or  Esc :  back to this menu"
+13 COLOUR 3
+14 PRINT ""
+15 PRINT "     D  ......  DEMO        the bike drives itself"
+16 PRINT "     2  ......  2-PLAYER    a red bike chases you"
+17 PRINT "     . . .  or press any other key to PLAY"
+18 DK=GETKEY()
+19 IF DK=81 OR DK=113 OR DK=27 THEN END
+20 FULLSCREEN ON : UI OFF
 21 MZ=16 : CELL=5.0 : WALLY=1.4 : SPEED=0.08 : TSPD=0.016 : GRAV=0.006 : JUMPV0=0.09
 22 PI=4*ATN(1)
 23 CAMDIST=7.2 : CAMHT=4.0 : CAMDIST2=3.5 : CAMHT2=1.8 : D10=PI*10/180 : D20=PI*20/180 : TSLOW=PI*2/180 : TQUICK=PI*8/180 : MAXD=100 : PMAX=PI*15/180 : DSPD=0.11
@@ -62,12 +63,12 @@
 90 REM === Main loop ===
 91 MainLoop:
 92 K=INKEY
-93 REM --- Keyboard: Q/ESC=quit  M=map  via SWITCH ---
+93 REM --- Keyboard: Q/ESC=back to menu  M=map  via SWITCH ---
 94 SWITCH(K)
 95 CASE 81:
 96 CASE 113:
 97 CASE 27:
-98 CALL Quit
+98 GOTO GameOver
 99 BREAK
 100 CASE 77:
 101 CASE 109:
@@ -351,23 +352,21 @@
 823 GAP2=TURNTGT-CUBEYAW : G2=ABS(GAP2)
 824 IF G2>TR*DT THEN CUBEYAW=CUBEYAW+SGN(GAP2)*TR*DT ELSE CUBEYAW=TURNTGT
 825 END SUB
-6049 REM Quit - Clean exit
+6040 REM GameOver - leave the arena, drop back to the start menu
+6041 GameOver:
+6042 CALL Quit
+6043 GOTO StartMenu
+6049 REM Quit - tear down GL, restore terminal, return to caller
 6050 SUB Quit STATIC
 6052 MOUSE OFF : UI ON
 6053 FULLSCREEN OFF
 6054 GL.CLOSE
-6058 CLS
-6059 PRINT "TRON ended."
-6061 PRINT ""
-6062 PRINT "Press any key..."
-6063 SLEEP 400
-6064 DUMMY=GETKEY()
-6065 END
+6055 CLS
 6066 END SUB
 6100 REM === Demo loop - autonomous lightcycle (separate from MainLoop) ===
 6101 DemoLoop:
 6102 K=INKEY
-6103 IF K=81 OR K=113 OR K=27 THEN CALL Quit
+6103 IF K=81 OR K=113 OR K=27 THEN GOTO GameOver
 6104 DT=1
 6105 LX=PX+COS(CUBEYAW)*8 : LZ=PZ+SIN(CUBEYAW)*8 : NEARW=0
 6106 IF LX<5 OR LX>75 OR LZ<5 OR LZ>75 THEN NEARW=1
@@ -470,7 +469,7 @@
 6253 TRLPCX2=PX2-0.4 : TRLPCZ2=PZ2 : TRLPCY2=0 : STARTED=0 : PTMR=0
 6254 TwoPlayerLoop:
 6255 K=INKEY
-6256 IF K=81 OR K=113 OR K=27 THEN CALL Quit
+6256 IF K=81 OR K=113 OR K=27 THEN GOTO GameOver
 6257 IF K=77 OR K=109 THEN CALL ToggleMap
 6258 IF K=70 OR K=102 THEN CALL ToggleFog
 6259 NOW=TIMER : DT=(NOW-LASTT)/16 : DT=(4+DT-ABS(4-DT))/2 : LASTT=NOW : LASTYAW=CUBEYAW : IF K=84 OR K=116 THEN TURNMODE=1-TURNMODE : TURNTGT=CUBEYAW : PYAW=CUBEYAW
