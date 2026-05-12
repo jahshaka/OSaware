@@ -126,6 +126,11 @@ class Interpreter {
         // ---------------------------------------------------------------------------
         this.ai_key      = null;   // Anthropic API key — entered at runtime, never persisted
         this.ai_messages = [];     // conversation history for the current session
+        this.ai_system   = '';     // custom system prompt set via AISYSTEM ('' = built-in default)
+        this.ai_model    = '';     // model override set via AIMODEL ('' = _aiDefaultModel)
+        this.ai_temp     = null;   // temperature 0..1 set via AITEMP (null = let the API choose)
+        this.ai_tokens   = 0;      // max output tokens set via AITOKENS (0 = 1024)
+        this._aiDefaultModel = 'claude-haiku-4-5-20251001';   // bump here when a faster model ships
         this.want_ai     = 0;      // flag: BASIC execution paused waiting for AI response
         this.want_auth   = 0;      // flag: BASIC execution paused waiting for DEVLOGIN/DEVLOGOUT/etc
 
@@ -2775,10 +2780,89 @@ class Interpreter {
         return CMD_OK;
     }
 
-    // AICLEAR — wipe conversation history to start a fresh context.
-    cmdAICLEAR() {
+    // AICLEAR        — wipe conversation history (start a fresh context).
+    // AICLEAR ALL    — also reset AISYSTEM / AIMODEL / AITEMP / AITOKENS back to defaults.
+    cmdAICLEAR(param) {
         this.ai_messages = [];
-        this.appendLine('AI conversation cleared.', 1);
+        const all = this.trim(String(param || '')).toUpperCase() === 'ALL';
+        if (all) {
+            this.ai_system = '';
+            this.ai_model  = '';
+            this.ai_temp   = null;
+            this.ai_tokens = 0;
+            this.appendLine('AI conversation cleared; system/model/temp/tokens reset to defaults.', 1);
+        } else {
+            this.appendLine('AI conversation cleared.', 1);
+        }
+        return CMD_OK;
+    }
+
+    // AISYSTEM "text"   — set the system prompt (your persona / raw context / data the model
+    //                     should always know). Replaces the built-in default. Accepts a string
+    //                     literal or a string variable.
+    // AISYSTEM ""       — reset to the built-in default.
+    // AISYSTEM          — show the current system prompt.
+    cmdAISYSTEM(param) {
+        const raw = this.trim(String(param || ''));
+        if (raw === '') {
+            const cur = this.ai_system || '(default — you are an AI assistant inside a BASIC terminal)';
+            this.appendLine('AI system prompt: ' + cur, 1);
+            return CMD_OK;
+        }
+        if (raw === '""' || raw === "''") {
+            this.ai_system = '';
+            this.appendLine('AI system prompt reset to default.', 1);
+            return CMD_OK;
+        }
+        let text;
+        if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+            text = raw.slice(1, -1);
+        } else {
+            text = String(this.lookup(raw) || raw);
+        }
+        this.ai_system = text;
+        this.appendLine('AI system prompt set (' + text.length + ' chars).', 1);
+        return CMD_OK;
+    }
+
+    // AIMODEL name   — pick the model. Aliases: FAST/HAIKU, SMART/SONNET, BEST/OPUS, DEFAULT.
+    //                  Any other value is used as a literal Anthropic model id.
+    // AIMODEL        — show the current model.
+    cmdAIMODEL(param) {
+        const raw = this.trim(String(param || '')).replace(/^["']|["']$/g, '');
+        if (raw === '') { this.appendLine('AI model: ' + (this.ai_model || this._aiDefaultModel), 1); return CMD_OK; }
+        const map = {
+            FAST:    this._aiDefaultModel, HAIKU:  this._aiDefaultModel, DEFAULT: '',
+            SMART:   'claude-sonnet-4-6',  SONNET: 'claude-sonnet-4-6',
+            BEST:    'claude-opus-4-7',    OPUS:   'claude-opus-4-7',
+        };
+        const u = raw.toUpperCase();
+        this.ai_model = (u in map) ? map[u] : raw;
+        this.appendLine('AI model: ' + (this.ai_model || this._aiDefaultModel), 1);
+        return CMD_OK;
+    }
+
+    // AITEMP n   — sampling temperature 0..1 (0 = deterministic, best for pulling data).
+    // AITEMP     — show it.  Out-of-range value resets to the API default.
+    cmdAITEMP(param) {
+        const raw = this.trim(String(param || ''));
+        if (raw === '') { this.appendLine('AI temperature: ' + (this.ai_temp == null ? '(API default)' : this.ai_temp), 1); return CMD_OK; }
+        const n = parseFloat(raw);
+        if (isNaN(n) || n < 0 || n > 1) { this.ai_temp = null; this.appendLine('AI temperature reset to API default.', 1); return CMD_OK; }
+        this.ai_temp = n;
+        this.appendLine('AI temperature: ' + n, 1);
+        return CMD_OK;
+    }
+
+    // AITOKENS n  — max output tokens (1..8192).  AITOKENS shows it; 0 or bad value resets to 1024.
+    cmdAITOKENS(param) {
+        const raw = this.trim(String(param || ''));
+        if (raw === '') { this.appendLine('AI max tokens: ' + (this.ai_tokens || 1024), 1); return CMD_OK; }
+        let n = parseInt(raw, 10);
+        if (isNaN(n) || n < 1) { this.ai_tokens = 0; this.appendLine('AI max tokens reset to 1024.', 1); return CMD_OK; }
+        if (n > 8192) n = 8192;
+        this.ai_tokens = n;
+        this.appendLine('AI max tokens: ' + n, 1);
         return CMD_OK;
     }
 
@@ -2892,8 +2976,11 @@ class Interpreter {
 
         if (!this.ai_key) {
             this.appendLine('No API key set. Type AIKEY to enter your Anthropic key.', 1);
+            this.assign_(ASS_STRING, 'AIERR$', 'no API key');
             return CMD_OK;
         }
+        // AIERR$ holds the last AI error message ("" on success) so a program can test it.
+        this.assign_(ASS_STRING, 'AIERR$', '');
 
         // Pause the BASIC execution loop.
         this.want_ai = 1;
@@ -2902,51 +2989,73 @@ class Interpreter {
             this.execute_timer = 0;
         }
 
+        // Keep the conversation history bounded (token-limit / cost). Trim oldest
+        // turns, keeping the array starting on a 'user' message.
+        if (this.ai_messages.length >= 40) {
+            this.ai_messages = this.ai_messages.slice(-38);
+            if (this.ai_messages[0] && this.ai_messages[0].role !== 'user') this.ai_messages.shift();
+        }
         this.ai_messages.push({ role: 'user', content: text });
 
         // Only print streaming output when not storing to a variable.
-        const silent = (resultVar !== null);
+        const silent  = (resultVar !== null);
+        const numMode = (mode === 'number');
         if (!silent) this.appendLine('AI: ', 0);
 
-        this._callAnthropicAPI(silent).then((fullText) => {
-            // Store result if a variable was given.
+        const finish = () => {
+            this.want_ai = 0;
+            if (!silent) this.appendLine('', 1);
+            // The tick loop already advanced run_line when this handler returned
+            // CMD_OK; don't double-advance here. Same invariant as _runAuthOp.
+            if (this.running) this._scheduleNextTick();
+            else { this.appendLine(this.prompt, 0); this.blink(); }
+        };
+
+        this._callAnthropicAPI(silent, numMode).then((fullText) => {
             if (resultVar) {
-                if (mode === 'number') {
+                if (numMode) {
                     const n = parseFloat(fullText.trim());
                     this.assign_(ASS_NUMBER, resultVar, isNaN(n) ? 0 : n);
                 } else {
                     this.assign_(ASS_STRING, resultVar, fullText.trim());
                 }
             }
-            this.want_ai = 0;
-            if (!silent) this.appendLine('', 1);
-            // NOTE: tick loop already advanced run_line when cmdAIRUN returned
-            // CMD_OK; don't double-advance here or the line after AIRUN is
-            // skipped. Same invariant as _runAuthOp in shell.js.
-            if (this.running) {
-                this._scheduleNextTick();
-            } else {
-                this.appendLine(this.prompt, 0);
-                this.blink();
-            }
+            finish();
         }).catch((err) => {
-            this.want_ai = 0;
-            if (!silent) this.appendLine('', 1);
-            this.appendLine('AI ERROR: ' + err.message, 1);
-            if (this.running) {
-                this._scheduleNextTick();
-            } else {
-                this.appendLine(this.prompt, 0);
-                this.blink();
+            const msg = String((err && err.message) || err) || 'error';
+            this.assign_(ASS_STRING, 'AIERR$', msg);
+            if (resultVar) {                       // leave a defined value the program can test
+                if (numMode) this.assign_(ASS_NUMBER, resultVar, 0);
+                else         this.assign_(ASS_STRING, resultVar, '');
             }
+            this.appendLine('AI ERROR: ' + msg, 1);
+            finish();
         });
 
         return CMD_OK;
     }
 
-    // _callAnthropicAPI — streams a response from claude-haiku-4-5.
-    // silent=true suppresses character-by-character output (used when storing to a var).
-    async _callAnthropicAPI(silent = false) {
+    // _callAnthropicAPI — streams a response from the configured model (default claude-haiku-4-5).
+    // silent=true     suppresses character-by-character output (used when storing to a var).
+    // numberMode=true appends a "reply with only a number" instruction to the system prompt.
+    async _callAnthropicAPI(silent = false, numberMode = false) {
+        const fmtHint = '\n\nReply in plain text only — no markdown, no bullet points, no headers.';
+        const baseSys = this.ai_system ||
+            'You are a helpful AI assistant running inside a BASIC interpreter terminal. ' +
+            'Keep responses concise and terminal-friendly.';
+        const numHint = numberMode
+            ? '\n\nThe caller needs a single numeric answer. Reply with ONLY a number — digits, an ' +
+              'optional decimal point and an optional leading minus sign. No words, units, or other text.'
+            : '';
+        const reqBody = {
+            model:      this.ai_model || this._aiDefaultModel,
+            max_tokens: this.ai_tokens || 1024,
+            system:     baseSys + fmtHint + numHint,
+            messages:   this.ai_messages,
+            stream:     true,
+        };
+        if (this.ai_temp != null) reqBody.temperature = this.ai_temp;
+
         // AbortController gives us a 30-second hard timeout.
         // Without it a hung or slow response blocks the BASIC program forever.
         const controller = new AbortController();
@@ -2962,15 +3071,7 @@ class Interpreter {
                     'anthropic-version':       '2023-06-01',
                     'anthropic-dangerous-direct-browser-access': 'true',
                 },
-                body: JSON.stringify({
-                    model:      'claude-haiku-4-5-20251001',
-                    max_tokens: 1024,
-                    system:     'You are a helpful AI assistant running inside a BASIC interpreter terminal. ' +
-                                'Keep responses concise and terminal-friendly. Use plain text only — ' +
-                                'no markdown, no bullet points, no headers.',
-                    messages:   this.ai_messages,
-                    stream:     true,
-                }),
+                body: JSON.stringify(reqBody),
             });
         } finally {
             clearTimeout(timeoutId);
@@ -3240,8 +3341,12 @@ class Interpreter {
             ['GL.ENVMAP',      0,  (p) => this.cmdGL_ENVMAP(p),        1],
 
             // AI commands
-            ['AIKEY',   0,  (p) => this.cmdAIKEY(p),  1],
-            ['AICLEAR', 0,  ()  => this.cmdAICLEAR()],
+            ['AIKEY',    0,  (p) => this.cmdAIKEY(p),    1],
+            ['AICLEAR',  0,  (p) => this.cmdAICLEAR(p),  1],
+            ['AISYSTEM', 0,  (p) => this.cmdAISYSTEM(p), 1],
+            ['AIMODEL',  0,  (p) => this.cmdAIMODEL(p),  1],
+            ['AITOKENS', 0,  (p) => this.cmdAITOKENS(p), 1],
+            ['AITEMP',   0,  (p) => this.cmdAITEMP(p),   1],
             ['WS.OPEN',  0,  (p) => this.cmdWS_OPEN(p),  1],
             ['WS.SEND',  0,  (p) => this.cmdWS_SEND(p),  1],
             ['WS.CLOSE', 0,  ()  => this.cmdWS_CLOSE()],
