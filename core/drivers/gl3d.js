@@ -739,7 +739,7 @@ class GL3DDriver {
         if (!t) return CMD_OK;
         for (const m of Object.values(g.meshes)) {
             if (!m._threeObjects || m._builtMode !== g.mode) {
-                if (!m._isSphere && !m._isChrome) this._glSyncMesh(m, g);
+                if (!m._isSphere && !m._isChrome && !m._isTemplate) this._glSyncMesh(m, g);
             }
         }
         this._glSyncCanvas();
@@ -1513,6 +1513,54 @@ class GL3DDriver {
         if (!g.three._chromeMeshes) g.three._chromeMeshes = [];
         g.three._chromeMeshes.push(m);
 
+        return CMD_OK;
+    }
+
+// GL.INSTANCE srcId, x, y, z, ryDeg, lenScale
+// Adds one GPU instance of mesh srcId, placed at (x,y,z), rotated ryDeg degrees
+// about the Y axis, and scaled lenScale along its local X axis (Y/Z stay 1).
+// The first call for a given srcId promotes that mesh into a THREE.InstancedMesh
+// (capacity 2048) and removes the original from the scene — it becomes an
+// invisible template whose geometry+material every instance shares. Subsequent
+// calls just write one matrix and bump the instance count. Result: thousands of
+// little segments collapse into a single draw call.
+    cmdGL_INSTANCE(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 6);
+        const m = g.meshes[Math.round(p[0])];
+        if (!m) return CMD_OK;
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        if (!m._instanced) {
+            if (!m._threeObjects || m._builtMode !== g.mode) this._glSyncMesh(m, g);
+            const src = m._threeObjects && m._threeObjects[0];
+            if (!src || !src.geometry || !src.material) return CMD_OK;
+            const inst = new THREE.InstancedMesh(src.geometry, src.material, 2048);
+            inst.count = 0;
+            inst.frustumCulled = false;
+            for (const obj of m._threeObjects) t.scene.remove(obj);
+            m._isTemplate = true;
+            t.scene.add(inst);
+            m._instanced = inst;
+            if (!t._instMat) {
+                t._instMat  = new THREE.Matrix4();
+                t._instPos  = new THREE.Vector3();
+                t._instQuat = new THREE.Quaternion();
+                t._instScl  = new THREE.Vector3();
+                t._instAxisY = new THREE.Vector3(0, 1, 0);
+            }
+        }
+        const inst = m._instanced;
+        const i = inst.count;
+        if (i >= inst.instanceMatrix.count) return CMD_OK;   // capacity reached
+        const len = (p[5] == null || p[5] === 0) ? 1 : p[5];
+        t._instPos.set(p[1] || 0, p[2] || 0, p[3] || 0);
+        t._instQuat.setFromAxisAngle(t._instAxisY, (p[4] || 0) * Math.PI / 180);
+        t._instScl.set(len, 1, 1);
+        t._instMat.compose(t._instPos, t._instQuat, t._instScl);
+        inst.setMatrixAt(i, t._instMat);
+        inst.count = i + 1;
+        inst.instanceMatrix.needsUpdate = true;
         return CMD_OK;
     }
 
