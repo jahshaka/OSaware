@@ -2800,6 +2800,8 @@ class Interpreter {
     // AISYSTEM "text"   — set the system prompt (your persona / raw context / data the model
     //                     should always know). Replaces the built-in default. Accepts a string
     //                     literal or a string variable.
+    // AISYSTEM @"file"  — load the prompt from a VFS file/program (its line text, joined by \n).
+    //                     Save it first with SAVE "file", then AISYSTEM @"file".
     // AISYSTEM ""       — reset to the built-in default.
     // AISYSTEM          — show the current system prompt.
     cmdAISYSTEM(param) {
@@ -2814,6 +2816,34 @@ class Interpreter {
             this.appendLine('AI system prompt reset to default.', 1);
             return CMD_OK;
         }
+        if (raw.startsWith('@')) {
+            const fn = this.trim(raw.substring(1)).replace(/^["']|["']$/g, '');
+            if (!fn) return CMD_ESYNTAX;
+            const resumePrompt = () => {
+                if (this.running) this._scheduleNextTick();
+                else { this.appendLine(this.prompt, 0); this.blink(); }
+            };
+            let result;
+            try { result = this.fs.loadFile(fn, this); } catch (e) { result = -1; }
+            if (result && typeof result.then === 'function') {       // async load — pause execution
+                this.want_ai = 1;
+                if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
+                result.then((a) => {
+                    this.want_ai = 0;
+                    if (a && typeof a !== 'number') this._aiSystemFromFile(a, fn);
+                    else this.appendLine('AISYSTEM: could not read "' + fn + '"', 1);
+                    resumePrompt();
+                }).catch(() => {
+                    this.want_ai = 0;
+                    this.appendLine('AISYSTEM: could not read "' + fn + '"', 1);
+                    resumePrompt();
+                });
+                return CMD_OK;
+            }
+            if (!result || typeof result === 'number') { this.appendLine('AISYSTEM: could not read "' + fn + '"', 1); return CMD_OK; }
+            this._aiSystemFromFile(result, fn);
+            return CMD_OK;
+        }
         let text;
         if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
             text = raw.slice(1, -1);
@@ -2823,6 +2853,15 @@ class Interpreter {
         this.ai_system = text;
         this.appendLine('AI system prompt set (' + text.length + ' chars).', 1);
         return CMD_OK;
+    }
+
+    // _aiSystemFromFile — set ai_system from a loaded VFS line array (joins the non-empty
+    // line texts in order, dropping the line numbers).
+    _aiSystemFromFile(linesArr, fn) {
+        const parts = [];
+        for (let i = 0; i < linesArr.length; i++) if (linesArr[i] && linesArr[i] !== '') parts.push(linesArr[i]);
+        this.ai_system = parts.join('\n');
+        this.appendLine('AI system prompt loaded from "' + fn + '" (' + this.ai_system.length + ' chars).', 1);
     }
 
     // AIMODEL name   — pick the model. Aliases: FAST/HAIKU, SMART/SONNET, BEST/OPUS, DEFAULT.
@@ -2863,6 +2902,75 @@ class Interpreter {
         if (n > 8192) n = 8192;
         this.ai_tokens = n;
         this.appendLine('AI max tokens: ' + n, 1);
+        return CMD_OK;
+    }
+
+    // WEBGET url$, RESULT$ — HTTP GET from the open web (https assumed if no scheme).
+    //   RESULT$  receives the response body text (capped at 1 MB).
+    //   WEBSTATUS receives the HTTP status code (0 on a network/CORS error).
+    //   WEBERR$   is "" on success or holds the error text — test it in programs.
+    //   url$ / RESULT$ are a quoted string or a string variable.
+    // Browser CORS rules apply: only sites that send Access-Control-Allow-Origin
+    // headers will work (most public JSON APIs do; many ordinary web pages do not).
+    cmdWEBGET(param) {
+        const raw = this.trim(String(param || ''));
+        if (!raw) return CMD_ESYNTAX;
+        // split:  url , RESULT$    (url may be quoted or a variable)
+        let urlPart, resVar = null;
+        if (raw.startsWith('"')) {
+            const q = raw.indexOf('"', 1);
+            if (q > 0) {
+                urlPart = raw.substring(0, q + 1);
+                const after = this.trim(raw.substring(q + 1));
+                if (after.startsWith(',')) resVar = this.trim(after.substring(1));
+            } else { urlPart = raw; }
+        } else {
+            const c = raw.indexOf(',');
+            if (c > 0) { urlPart = this.trim(raw.substring(0, c)); resVar = this.trim(raw.substring(c + 1)); }
+            else urlPart = raw;
+        }
+        if (!resVar) { this.appendLine('WEBGET needs a result variable:  WEBGET url$, R$', 1); return CMD_ESYNTAX; }
+        let url;
+        if (urlPart.startsWith('"') && urlPart.endsWith('"')) url = urlPart.slice(1, -1);
+        else url = String(this.lookup(urlPart) || urlPart);
+        url = this.trim(url);
+        if (!url) { this.appendLine('WEBGET: empty URL', 1); return CMD_ESYNTAX; }
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+
+        this.assign_(ASS_STRING, 'WEBERR$', '');
+        this.assign_(ASS_NUMBER, 'WEBSTATUS', 0);
+
+        // pause BASIC execution while the request is in flight
+        this.want_ai = 1;
+        if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
+        const finish = () => {
+            this.want_ai = 0;
+            if (this.running) this._scheduleNextTick();
+            else { this.appendLine(this.prompt, 0); this.blink(); }
+        };
+
+        const MAXLEN = 1048576;                       // 1 MB body cap
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 20000);
+        fetch(url, { method: 'GET', signal: controller.signal })
+            .then(async (resp) => {
+                this.assign_(ASS_NUMBER, 'WEBSTATUS', resp.status || 0);
+                let body = await resp.text();         // signal still active — the abort also covers the body
+                clearTimeout(tid);
+                if (body.length > MAXLEN) body = body.slice(0, MAXLEN) + '\n...[truncated at 1 MB]';
+                this.assign_(ASS_STRING, resVar, body);
+                if (!resp.ok) this.assign_(ASS_STRING, 'WEBERR$', 'HTTP ' + resp.status);
+                finish();
+            })
+            .catch((err) => {
+                clearTimeout(tid);
+                const msg = (err && err.name === 'AbortError') ? 'timeout (20s)' : (String((err && err.message) || err) || 'error');
+                this.assign_(ASS_STRING, 'WEBERR$', msg);
+                this.assign_(ASS_STRING, resVar, '');
+                const hint = (msg === 'Failed to fetch') ? '  (the site may not allow cross-origin requests)' : '';
+                this.appendLine('WEB ERROR: ' + msg + hint, 1);
+                finish();
+            });
         return CMD_OK;
     }
 
@@ -3347,6 +3455,7 @@ class Interpreter {
             ['AIMODEL',  0,  (p) => this.cmdAIMODEL(p),  1],
             ['AITOKENS', 0,  (p) => this.cmdAITOKENS(p), 1],
             ['AITEMP',   0,  (p) => this.cmdAITEMP(p),   1],
+            ['WEBGET',   0,  (p) => this.cmdWEBGET(p),   1],
             ['WS.OPEN',  0,  (p) => this.cmdWS_OPEN(p),  1],
             ['WS.SEND',  0,  (p) => this.cmdWS_SEND(p),  1],
             ['WS.CLOSE', 0,  ()  => this.cmdWS_CLOSE()],
