@@ -1519,14 +1519,15 @@ class GL3DDriver {
 // GL.INSTANCE srcId, x, y, z, dirX, dirY, dirZ
 // Adds one GPU instance of mesh srcId at (x,y,z), with the template's local +X axis
 // mapped onto the vector (dirX,dirY,dirZ) — so a unit segment 0..1 along +X becomes
-// a segment of that length pointing that way — while local +Y stays world-vertical
-// and +Z stays world +Z. (Ideal for ribbons / beams / blades: the cross-section
-// stays upright no matter how the path slopes, so consecutive segments share an
-// exact edge — no seams.) The first call for a given srcId promotes that mesh into a
-// THREE.InstancedMesh (capacity 2048) and removes the original from the scene — it
-// becomes an invisible template whose geometry+material every instance shares.
-// Subsequent calls just write one matrix and bump the count: thousands of segments
-// collapse into a single draw call.
+// a segment of that length pointing that way. Local +Y stays world-vertical; local
+// +Z becomes the *horizontal vector perpendicular to the X direction* (unit length),
+// so any cross-section width in the template stays sideways-to-the-path. (Ideal for
+// ribbons / beams / blades: the cross-section stays upright no matter how the path
+// slopes, so consecutive segments share an exact edge — no seams.) The first call
+// for a given srcId promotes that mesh into a THREE.InstancedMesh and removes the
+// original from the scene — it becomes an invisible template whose geometry+material
+// every instance shares. Subsequent calls just write one matrix and bump the count;
+// the matrix buffer auto-doubles on overflow, so there's no hard segment cap.
     cmdGL_INSTANCE(param) {
         const g = this._glState();
         const p = this._glParseFloats(param, 7);
@@ -1549,15 +1550,30 @@ class GL3DDriver {
                 t._instMat = new THREE.Matrix4();
                 t._instX   = new THREE.Vector3();
                 t._instY   = new THREE.Vector3(0, 1, 0);   // local Y -> world up
-                t._instZ   = new THREE.Vector3(0, 0, 1);   // local Z -> world Z
+                t._instZ   = new THREE.Vector3(0, 0, 1);   // local Z -> path's horizontal perpendicular (set per call)
             }
         }
-        const inst = m._instanced;
+        let inst = m._instanced;
         const i = inst.count;
-        if (i >= inst.instanceMatrix.count) return CMD_OK;   // capacity reached
+        // Grow (double) the matrix buffer rather than dropping instances on overflow.
+        if (i >= inst.instanceMatrix.count) {
+            const inst2 = new THREE.InstancedMesh(inst.geometry, inst.material, inst.instanceMatrix.count * 2);
+            inst2.frustumCulled = false;
+            for (let k = 0; k < i; k++) { inst.getMatrixAt(k, t._instMat); inst2.setMatrixAt(k, t._instMat); }
+            inst2.count = i;
+            inst2.instanceMatrix.needsUpdate = true;
+            t.scene.remove(inst);
+            if (typeof inst.dispose === 'function') inst.dispose();
+            t.scene.add(inst2);
+            m._instanced = inst2;
+            inst = inst2;
+        }
         let dx = p[4] || 0, dy = p[5] || 0, dz = p[6] || 0;
         if (dx === 0 && dy === 0 && dz === 0) dx = 1;        // degenerate guard
         t._instX.set(dx, dy, dz);
+        const hl = Math.hypot(dx, dz);
+        if (hl > 1e-6) t._instZ.set(-dz / hl, 0, dx / hl);   // unit horizontal perpendicular of (dx,_,dz)
+        else t._instZ.set(0, 0, 1);
         t._instMat.makeBasis(t._instX, t._instY, t._instZ);
         t._instMat.setPosition(p[1] || 0, p[2] || 0, p[3] || 0);
         inst.setMatrixAt(i, t._instMat);
