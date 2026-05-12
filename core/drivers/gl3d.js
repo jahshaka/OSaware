@@ -1516,16 +1516,17 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-// GL.INSTANCE srcId, x, y, z, ryDeg, pitchDeg, lenScale
-// Adds one GPU instance of mesh srcId at (x,y,z). The instance's local +X axis is
-// pitched up by pitchDeg (rotation about local Z), then yawed ryDeg about Y, then
-// the geometry is scaled lenScale along that local X (Y/Z stay 1) — i.e. the unit
-// segment 0..1 along +X becomes a segment of length lenScale pointing in the
-// (yaw,pitch) direction. The first call for a given srcId promotes that mesh into a
+// GL.INSTANCE srcId, x, y, z, dirX, dirY, dirZ
+// Adds one GPU instance of mesh srcId at (x,y,z), with the template's local +X axis
+// mapped onto the vector (dirX,dirY,dirZ) — so a unit segment 0..1 along +X becomes
+// a segment of that length pointing that way — while local +Y stays world-vertical
+// and +Z stays world +Z. (Ideal for ribbons / beams / blades: the cross-section
+// stays upright no matter how the path slopes, so consecutive segments share an
+// exact edge — no seams.) The first call for a given srcId promotes that mesh into a
 // THREE.InstancedMesh (capacity 2048) and removes the original from the scene — it
 // becomes an invisible template whose geometry+material every instance shares.
-// Subsequent calls just write one matrix and bump the instance count. Result:
-// thousands of little segments collapse into a single draw call.
+// Subsequent calls just write one matrix and bump the count: thousands of segments
+// collapse into a single draw call.
     cmdGL_INSTANCE(param) {
         const g = this._glState();
         const p = this._glParseFloats(param, 7);
@@ -1545,27 +1546,20 @@ class GL3DDriver {
             t.scene.add(inst);
             m._instanced = inst;
             if (!t._instMat) {
-                t._instMat   = new THREE.Matrix4();
-                t._instPos   = new THREE.Vector3();
-                t._instScl   = new THREE.Vector3();
-                t._instQuat  = new THREE.Quaternion();
-                t._instQuatY = new THREE.Quaternion();
-                t._instQuatZ = new THREE.Quaternion();
-                t._instAxisY = new THREE.Vector3(0, 1, 0);
-                t._instAxisZ = new THREE.Vector3(0, 0, 1);
+                t._instMat = new THREE.Matrix4();
+                t._instX   = new THREE.Vector3();
+                t._instY   = new THREE.Vector3(0, 1, 0);   // local Y -> world up
+                t._instZ   = new THREE.Vector3(0, 0, 1);   // local Z -> world Z
             }
         }
         const inst = m._instanced;
         const i = inst.count;
         if (i >= inst.instanceMatrix.count) return CMD_OK;   // capacity reached
-        const D2R = Math.PI / 180;
-        const len = (p[6] == null || p[6] === 0) ? 1 : p[6];
-        t._instPos.set(p[1] || 0, p[2] || 0, p[3] || 0);
-        t._instQuatY.setFromAxisAngle(t._instAxisY, (p[4] || 0) * D2R);   // yaw
-        t._instQuatZ.setFromAxisAngle(t._instAxisZ, (p[5] || 0) * D2R);   // pitch (local Z)
-        t._instQuat.multiplyQuaternions(t._instQuatY, t._instQuatZ);      // pitch first, then yaw
-        t._instScl.set(len, 1, 1);
-        t._instMat.compose(t._instPos, t._instQuat, t._instScl);
+        let dx = p[4] || 0, dy = p[5] || 0, dz = p[6] || 0;
+        if (dx === 0 && dy === 0 && dz === 0) dx = 1;        // degenerate guard
+        t._instX.set(dx, dy, dz);
+        t._instMat.makeBasis(t._instX, t._instY, t._instZ);
+        t._instMat.setPosition(p[1] || 0, p[2] || 0, p[3] || 0);
         inst.setMatrixAt(i, t._instMat);
         inst.count = i + 1;
         inst.instanceMatrix.needsUpdate = true;
