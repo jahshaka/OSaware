@@ -130,6 +130,7 @@ class Interpreter {
         this.ai_model    = '';     // model override set via AIMODEL ('' = _aiDefaultModel)
         this.ai_temp     = null;   // temperature 0..1 set via AITEMP (null = let the API choose)
         this.ai_tokens   = 0;      // max output tokens set via AITOKENS (0 = 1024)
+        this.ai_web      = false;  // AIWEB ON: give AI/AINUM the server-side web_search tool
         this._aiDefaultModel = 'claude-haiku-4-5-20251001';   // bump here when a faster model ships
         this.want_ai     = 0;      // flag: BASIC execution paused waiting for AI response
         this.want_auth   = 0;      // flag: BASIC execution paused waiting for DEVLOGIN/DEVLOGOUT/etc
@@ -2790,7 +2791,8 @@ class Interpreter {
             this.ai_model  = '';
             this.ai_temp   = null;
             this.ai_tokens = 0;
-            this.appendLine('AI conversation cleared; system/model/temp/tokens reset to defaults.', 1);
+            this.ai_web    = false;
+            this.appendLine('AI conversation cleared; system/model/temp/tokens/web reset to defaults.', 1);
         } else {
             this.appendLine('AI conversation cleared.', 1);
         }
@@ -2903,6 +2905,17 @@ class Interpreter {
         this.ai_tokens = n;
         this.appendLine('AI max tokens: ' + n, 1);
         return CMD_OK;
+    }
+
+    // AIWEB ON | OFF | (no arg) — when ON, AI/AINUM requests carry Anthropic's server-side
+    // web_search tool, so Claude can look things up itself (e.g. AI "what is the price of bitcoin", P$).
+    // OFF by default (web search adds latency and a per-search cost). AICLEAR ALL resets it.
+    cmdAIWEB(param) {
+        const arg = this.trim(String(param || '')).toUpperCase();
+        if (arg === '')      { this.appendLine('AI web search: ' + (this.ai_web ? 'ON' : 'OFF'), 1); return CMD_OK; }
+        if (arg === 'ON'  || arg === '1') { this.ai_web = true;  this.appendLine('AI web search ON — Claude can search the web to answer.', 1); return CMD_OK; }
+        if (arg === 'OFF' || arg === '0') { this.ai_web = false; this.appendLine('AI web search OFF.', 1); return CMD_OK; }
+        return CMD_ESYNTAX;
     }
 
     // WEBGET url$, RESULT$ — HTTP GET from the open web (https assumed if no scheme).
@@ -3155,19 +3168,25 @@ class Interpreter {
             ? '\n\nThe caller needs a single numeric answer. Reply with ONLY a number — digits, an ' +
               'optional decimal point and an optional leading minus sign. No words, units, or other text.'
             : '';
+        const webHint = this.ai_web
+            ? '\n\nIf the answer needs current, factual, or external information, use the web search ' +
+              'tool to look it up rather than guessing. Then give the answer plainly.'
+            : '';
         const reqBody = {
             model:      this.ai_model || this._aiDefaultModel,
-            max_tokens: this.ai_tokens || 1024,
-            system:     baseSys + fmtHint + numHint,
+            max_tokens: this.ai_tokens || (this.ai_web ? 4096 : 1024),   // web answers run long; give them room
+            system:     baseSys + fmtHint + numHint + webHint,
             messages:   this.ai_messages,
             stream:     true,
         };
         if (this.ai_temp != null) reqBody.temperature = this.ai_temp;
+        // AIWEB ON — let Claude search the web itself (server-side tool; Anthropic runs the search).
+        if (this.ai_web) reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
 
-        // AbortController gives us a 30-second hard timeout.
+        // AbortController gives us a hard timeout (longer when web search may be in play).
         // Without it a hung or slow response blocks the BASIC program forever.
         const controller = new AbortController();
-        const timeoutId  = setTimeout(() => controller.abort(), 30000);
+        const timeoutId  = setTimeout(() => controller.abort(), this.ai_web ? 60000 : 30000);
         let response;
         try {
             response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3455,6 +3474,7 @@ class Interpreter {
             ['AIMODEL',  0,  (p) => this.cmdAIMODEL(p),  1],
             ['AITOKENS', 0,  (p) => this.cmdAITOKENS(p), 1],
             ['AITEMP',   0,  (p) => this.cmdAITEMP(p),   1],
+            ['AIWEB',    0,  (p) => this.cmdAIWEB(p),    1],
             ['WEBGET',   0,  (p) => this.cmdWEBGET(p),   1],
             ['WS.OPEN',  0,  (p) => this.cmdWS_OPEN(p),  1],
             ['WS.SEND',  0,  (p) => this.cmdWS_SEND(p),  1],
