@@ -76,9 +76,20 @@
     }
 
     /* oEmulator_div never scrolls itself — the wrapper scrolls in idle mode */
-    /* Graphics mode: canvas shows through when this class is active */
+    /* Graphics mode: canvas shows through when this class is active.
+       Also kill text-selection / tap-highlight so click-dragging in a game
+       (e.g. mouse-look in TRON) doesn't paint a selection box over the HUD. */
     #oEmulator_div.graphics-active {
       background: transparent !important;
+      cursor: default;
+      user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #oEmulator_div.graphics-active * {
+      user-select: none;
+      -webkit-user-select: none;
     }
     /* CSS cursor blink — uses visibility toggle so DOM size never changes */
     @keyframes blink-cursor {

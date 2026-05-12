@@ -94,12 +94,14 @@ class GL3DDriver {
         // Tear down any existing Three.js renderer cleanly
         if (this._gl && this._gl.three) {
             const t = this._gl.three;
+            if (t.composer && t.composer.dispose) t.composer.dispose();
             if (t.renderer) { t.renderer.dispose(); t.renderer.forceContextLoss(); }
             if (this._glCanvas && this._glCanvas.parentNode) {
                 this._glCanvas.parentNode.removeChild(this._glCanvas);
             }
             this._glCanvas = null;
         }
+        if (this._fpsDiv) { try { this._fpsDiv.remove(); } catch (e) {} this._fpsDiv = null; }
 
         this._gl = {
             fov:        60,
@@ -605,6 +607,14 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+    // GL.LIGHTOFF — turn the directional light off (ambient + emissives still apply)
+    cmdGL_LIGHTOFF() {
+        const g = this._glState();
+        g.light = null;
+        if (g.three && g.three.dirLight) g.three.dirLight.intensity = 0;
+        return CMD_OK;
+    }
+
     cmdGL_AMBIENT(param) {
         const v = Number(this.evalCalc(this.trim(String(param||'0.25')), ASS_NUMBER));
         const g = this._glState();
@@ -719,7 +729,7 @@ class GL3DDriver {
                 }
             }
         }
-        t.renderer.render(t.scene, t.camera);
+        this._glRenderFrame(t);
         return CMD_OK;
     }
 
@@ -745,7 +755,111 @@ class GL3DDriver {
                 }
             }
         }
-        t.renderer.render(t.scene, t.camera);
+        this._glRenderFrame(t);
+        return CMD_OK;
+    }
+
+    // Render one frame — through the bloom EffectComposer if active, else direct.
+    // Also drives the optional FPS overlay (set up by GL.FPS).
+    _glRenderFrame(t) {
+        if (this._gl && this._gl.fpsOn && this._fpsDiv) {
+            const g = this._gl;
+            g._fpsFrames = (g._fpsFrames || 0) + 1;
+            const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+            if (!g._fpsLast) g._fpsLast = now;
+            const dt = now - g._fpsLast;
+            if (dt >= 500) {
+                this._fpsDiv.textContent = 'Frames per second: ' + Math.round(g._fpsFrames * 1000 / dt);
+                g._fpsFrames = 0;
+                g._fpsLast = now;
+            }
+        }
+        if (t.composer) t.composer.render();
+        else t.renderer.render(t.scene, t.camera);
+    }
+
+    // Ensure an EffectComposer (RenderPass only) exists on `t`. Once active, frames render through
+    // it and the canvas's hardware MSAA is bypassed (so GL.AA controls anti-aliasing instead).
+    _glEnsureComposer(t) {
+        if (t.composer) return t.composer;
+        if (!THREE.EffectComposer || !THREE.RenderPass) return null;
+        const c = new THREE.EffectComposer(t.renderer);
+        c.addPass(new THREE.RenderPass(t.scene, t.camera));
+        t.composer = c;
+        return c;
+    }
+
+    // GL.BLOOM strength [, radius [, threshold]] — post-process bloom glow. strength 0 = off.
+    cmdGL_BLOOM(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 3);
+        const strength = p[0] || 0;
+        if (strength <= 0) {
+            if (t.composer && t.bloomPass) { t.composer.removePass(t.bloomPass); t.bloomPass = null; }
+            return CMD_OK;
+        }
+        if (!THREE.UnrealBloomPass) return CMD_OK; // post-fx libs not loaded
+        const c = this._glEnsureComposer(t);
+        if (!c) return CMD_OK;
+        const radius    = ntok > 1 ? p[1] : 0.4;
+        const threshold = ntok > 2 ? p[2] : 0.3;
+        if (!t.bloomPass) {
+            const sz = new THREE.Vector2(); t.renderer.getDrawingBufferSize(sz);
+            t.bloomPass = new THREE.UnrealBloomPass(sz, strength, radius, threshold);
+            c.insertPass(t.bloomPass, 1);   // right after the RenderPass
+        } else {
+            t.bloomPass.strength = strength; t.bloomPass.radius = radius; t.bloomPass.threshold = threshold;
+        }
+        return CMD_OK;
+    }
+
+    // GL.AA flag — anti-aliasing via an FXAA post-process pass. 1 = on, 0 = off (aliased).
+    // Uses the EffectComposer (creating it if needed); cheap, so it doesn't cost the speed.
+    cmdGL_AA(param) {
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        g.aaOn = on;
+        if (on) {
+            if (!THREE.FXAAShader || !THREE.ShaderPass) return CMD_OK;
+            const c = this._glEnsureComposer(t);
+            if (!c) return CMD_OK;
+            if (!t.fxaaPass) {
+                const sz = new THREE.Vector2(); t.renderer.getDrawingBufferSize(sz);
+                t.fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
+                t.fxaaPass.material.uniforms['resolution'].value.set(1 / Math.max(1, sz.x), 1 / Math.max(1, sz.y));
+                c.addPass(t.fxaaPass);   // append — runs after the scene render + bloom
+            }
+        } else if (t.composer && t.fxaaPass) {
+            t.composer.removePass(t.fxaaPass);
+            t.fxaaPass = null;
+        }
+        return CMD_OK;
+    }
+
+    // GL.FPS flag — 1: show a "Frames per second: N" overlay (top-right); 0: hide it.
+    // System-level — the counting and the overlay live here, not in BASIC.
+    cmdGL_FPS(param) {
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        const g = this._glState();
+        g.fpsOn = on;
+        if (on) {
+            if (!this._fpsDiv) {
+                const d = document.createElement('div');
+                d.style.cssText = 'position:fixed;top:6px;right:10px;font-family:monospace;font-size:14px;color:#3f7;text-shadow:0 0 4px #000,0 0 4px #000;z-index:99999;pointer-events:none;';
+                d.textContent = 'Frames per second: --';
+                document.body.appendChild(d);
+                this._fpsDiv = d;
+            }
+            this._fpsDiv.style.display = 'block';
+            g._fpsFrames = 0; g._fpsLast = 0;
+        } else if (this._fpsDiv) {
+            this._fpsDiv.style.display = 'none';
+        }
         return CMD_OK;
     }
 
@@ -1069,6 +1183,32 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+    // GL.RECTLIGHT x,y,z, w,h [, r,g,b [, intensity]] — rectangular area light, faces straight down.
+    // NOTE: RectAreaLight only affects MeshStandardMaterial / MeshPhysicalMaterial (e.g. loaded GLTF
+    // models) — it does NOT light MeshPhong geometry (GL.BEGIN/END meshes). Cleared by GL.LIGHTSOFF.
+    cmdGL_RECTLIGHT(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        if (THREE.RectAreaLightUniformsLib && !g._rectLibInit) { THREE.RectAreaLightUniformsLib.init(); g._rectLibInit = true; }
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 9);
+        const cc = v => Math.max(0, Math.min(255, v)) / 255;
+        const w = ntok > 3 ? (p[3] || 1) : 1;
+        const h = ntok > 4 ? (p[4] || 1) : 1;
+        const r  = ntok > 5 ? cc(p[5]) : 1;
+        const gv = ntok > 6 ? cc(p[6]) : 1;
+        const b  = ntok > 7 ? cc(p[7]) : 1;
+        const intensity = ntok > 8 ? p[8] : 5;
+        const light = new THREE.RectAreaLight(new THREE.Color(r, gv, b), intensity, w, h);
+        light.position.set(p[0]||0, p[1]||0, p[2]||0);
+        light.lookAt((p[0]||0), (p[1]||0) - 100, (p[2]||0));  // emit straight down
+        t.scene.add(light);
+        if (!g.rectLights) g.rectLights = [];
+        g.rectLights.push(light);
+        return CMD_OK;
+    }
+
 // GL.LIGHTSOFF — remove all point lights from scene
     cmdGL_LIGHTSOFF() {
         const g = this._glState();
@@ -1079,6 +1219,10 @@ class GL3DDriver {
                 g.three.scene.remove(l);
             }
             g.pointLights = [];
+        }
+        if (g.three && g.rectLights) {
+            for (const l of g.rectLights) { l.dispose(); g.three.scene.remove(l); }
+            g.rectLights = [];
         }
         return CMD_OK;
     }

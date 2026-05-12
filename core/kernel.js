@@ -2584,7 +2584,11 @@ class Interpreter {
         bus.on('gl.solidwire',         ()  => gl.cmdGL_SOLIDWIRE());
         bus.on('gl.wireall',           (m) => gl.cmdGL_WIREALL(m.param));
         bus.on('gl.light',             (m) => gl.cmdGL_LIGHT(m.param));
+        bus.on('gl.lightoff',          ()  => gl.cmdGL_LIGHTOFF());
         bus.on('gl.ambient',           (m) => gl.cmdGL_AMBIENT(m.param));
+        bus.on('gl.bloom',             (m) => gl.cmdGL_BLOOM(m.param));
+        bus.on('gl.fps',               (m) => gl.cmdGL_FPS(m.param));
+        bus.on('gl.aa',                (m) => gl.cmdGL_AA(m.param));
         bus.on('gl.begin',             ()  => gl.cmdGL_BEGIN());
         bus.on('gl.vertex',            (m) => gl.cmdGL_VERTEX(m.param));
         bus.on('gl.face',              (m) => gl.cmdGL_FACE(m.param));
@@ -2610,6 +2614,7 @@ class Interpreter {
         bus.on('gl.metalness',         (m) => gl.cmdGL_METALNESS(m.param));
         bus.on('gl.envmap',            (m) => gl.cmdGL_ENVMAP(m.param));
         bus.on('gl.pointlight',        (m) => gl.cmdGL_POINTLIGHT(m.param));
+        bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
         bus.on('gl.dispose',           (m) => gl.cmdGL_DISPOSE(m.param));
@@ -2706,7 +2711,11 @@ class Interpreter {
     cmdGL_SOLIDWIRE()          { return this.kernel.post({syscall:'gl.solidwire'}); }
     cmdGL_WIREALL(p)           { return this.kernel.post({syscall:'gl.wireall',param:p}); }
     cmdGL_LIGHT(p)             { return this.kernel.post({syscall:'gl.light',param:p}); }
+    cmdGL_LIGHTOFF()           { return this.kernel.post({syscall:'gl.lightoff'}); }
     cmdGL_AMBIENT(p)           { return this.kernel.post({syscall:'gl.ambient',param:p}); }
+    cmdGL_BLOOM(p)             { return this.kernel.post({syscall:'gl.bloom',param:p}); }
+    cmdGL_FPS(p)               { return this.kernel.post({syscall:'gl.fps',param:p}); }
+    cmdGL_AA(p)                { return this.kernel.post({syscall:'gl.aa',param:p}); }
     cmdGL_BEGIN()              { return this.kernel.post({syscall:'gl.begin'}); }
     cmdGL_VERTEX(p)            { return this.kernel.post({syscall:'gl.vertex',param:p}); }
     cmdGL_FACE(p)              { return this.kernel.post({syscall:'gl.face',param:p}); }
@@ -2732,6 +2741,7 @@ class Interpreter {
     cmdGL_METALNESS(p)         { return this.kernel.post({syscall:'gl.metalness',param:p}); }
     cmdGL_ENVMAP(p)            { return this.kernel.post({syscall:'gl.envmap',param:p}); }
     cmdGL_POINTLIGHT(p)        { return this.kernel.post({syscall:'gl.pointlight',param:p}); }
+    cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
     cmdGL_DISPOSE(p)           { return this.kernel.post({syscall:'gl.dispose',param:p}); }
@@ -3176,11 +3186,15 @@ class Interpreter {
             ['GL.SOLIDWIRE',   0,  ()  => this.cmdGL_SOLIDWIRE()],
             ['GL.DRAWALL',     0,  ()  => this.cmdGL_DRAWALL()],
             ['GL.AMBIENT',     0,  (p) => this.cmdGL_AMBIENT(p),       1],
+            ['GL.BLOOM',       0,  (p) => this.cmdGL_BLOOM(p),         1],
+            ['GL.FPS',         0,  (p) => this.cmdGL_FPS(p),           1],
+            ['GL.AA',          0,  (p) => this.cmdGL_AA(p),            1],
             ['GL.LOOKAT',      0,  (p) => this.cmdGL_LOOKAT(p),        1],
             ['GL.CAMERA',      0,  (p) => this.cmdGL_CAMERA(p),        1],
             ['GL.COLOUR',      0,  (p) => this.cmdGL_COLOUR(p),        1],
             ['GL.VERTEX',      0,  (p) => this.cmdGL_VERTEX(p),        1],
             ['GL.LIGHT',       0,  (p) => this.cmdGL_LIGHT(p),         1],
+            ['GL.LIGHTOFF',    0,  ()  => this.cmdGL_LIGHTOFF()],
             ['GL.COLOR',       0,  (p) => this.cmdGL_COLOUR(p),        1],
             ['GL.ROTATE',      0,  (p) => this.cmdGL_ROTATE(p),        1],
             ['GL.SCALE',       0,  (p) => this.cmdGL_SCALE(p),         1],
@@ -3199,6 +3213,7 @@ class Interpreter {
             ['GL.ALPHA',       0,  (p) => this.cmdGL_ALPHA(p),         1],            ['GL.WIRECOLOR',   0,  (p) => this.cmdGL_WIRECOLOR(p),     1],
             ['GL.TEXTURE',     0,  (p) => this.cmdGL_TEXTURE(p),       1],
             ['GL.POINTLIGHT',  0,  (p) => this.cmdGL_POINTLIGHT(p),    1],
+            ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
             ['GL.DISPOSE',     0,  (p) => this.cmdGL_DISPOSE(p),     1],

@@ -274,12 +274,13 @@ class TerminalDriver {
                 html += `<span style="${style}">${runText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`;
                 runText = '';
             };
+            const bufRow = this._screenBuf[r] || [];
             for (let c = 0; c < this.cols; c++) {
-                const cell = this._screenBuf[r][c];
-                const fg = this.colours[cell.fg] || '#00FF00';
-                const bg = cell.bg != null ? this.colours[cell.bg] : null;
+                const cell = bufRow[c];
+                const fg = (cell && this.colours[cell.fg]) || '#00FF00';
+                const bg = (cell && cell.bg != null) ? this.colours[cell.bg] : null;
                 if (fg !== runFg || bg !== runBg) { flush(); runFg = fg; runBg = bg; }
-                runText += cell.ch;
+                runText += (cell ? cell.ch : ' ');
             }
             flush();
         }
@@ -1187,11 +1188,19 @@ class TerminalDriver {
             this._mouse.pressX = Math.round(e.clientX - rect.left);
             this._mouse.pressY = Math.round(e.clientY - rect.top);
             this._mouse.btn = -1; // held
+            // When a program has the mouse trapped (MOUSE ON / ON MOUSE GOSUB),
+            // suppress the browser's text-selection drag so click-dragging the
+            // mouse-look doesn't paint a selection highlight over the terminal/HUD.
+            if (this._mouseEnabled === 1) {
+                e.preventDefault();
+                const sel = window.getSelection && window.getSelection();
+                if (sel && sel.removeAllRanges) { try { sel.removeAllRanges(); } catch (err) {} }
+            }
             // Fire ON MOUSE GOSUB if enabled
             if (this._mouseEnabled === 1 && this._mouseGosub >= 0 && this.running) {
                 this._fireEventGosub(this._mouseGosub);
             }
-        }, { passive: true });
+        }, { passive: false });
         mouseTarget.addEventListener('mouseup', (e) => {
             if (e.button !== 0) return;
             const rect = mouseTarget.getBoundingClientRect();
@@ -1295,7 +1304,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1778495356';
+                    return '1778538240';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,
