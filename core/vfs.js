@@ -3699,7 +3699,7 @@ class VirtualFs {
                 [522, 'GL.TRANSLATE CUBEID, PX, JUMPY-1.1, PZ'],
                 [523, 'GL.ROTATE CUBEID, 0, -CUBEYAW*180/PI+CYCOFF, 0'],
                 [524, 'CALL DrawMinimap'],
-                [525, 'LOCATE 1,1 : PRINT "DEMO   px=" ; INT(PX*10) ; " pz=" ; INT(PZ*10) ; " yaw=" ; INT(CUBEYAW*100) ; " trl=" ; TRLCOUNT ; "    "'],
+                [525, 'LOCATE 1,1 : PRINT "(Z)Wire (B)Bloom (F)Fog (G)Alias (L)Lights (S)FPS"'],
                 [526, 'GL.CLS 2,2,8 : GL.DRAWALL'],
                 [527, 'SLEEP 16 : GOTO DemoLoop'],
                 [528, 'REM ============================================================'],
