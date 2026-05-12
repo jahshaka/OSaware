@@ -1516,17 +1516,19 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-// GL.INSTANCE srcId, x, y, z, ryDeg, lenScale
-// Adds one GPU instance of mesh srcId, placed at (x,y,z), rotated ryDeg degrees
-// about the Y axis, and scaled lenScale along its local X axis (Y/Z stay 1).
-// The first call for a given srcId promotes that mesh into a THREE.InstancedMesh
-// (capacity 2048) and removes the original from the scene — it becomes an
-// invisible template whose geometry+material every instance shares. Subsequent
-// calls just write one matrix and bump the instance count. Result: thousands of
-// little segments collapse into a single draw call.
+// GL.INSTANCE srcId, x, y, z, ryDeg, pitchDeg, lenScale
+// Adds one GPU instance of mesh srcId at (x,y,z). The instance's local +X axis is
+// pitched up by pitchDeg (rotation about local Z), then yawed ryDeg about Y, then
+// the geometry is scaled lenScale along that local X (Y/Z stay 1) — i.e. the unit
+// segment 0..1 along +X becomes a segment of length lenScale pointing in the
+// (yaw,pitch) direction. The first call for a given srcId promotes that mesh into a
+// THREE.InstancedMesh (capacity 2048) and removes the original from the scene — it
+// becomes an invisible template whose geometry+material every instance shares.
+// Subsequent calls just write one matrix and bump the instance count. Result:
+// thousands of little segments collapse into a single draw call.
     cmdGL_INSTANCE(param) {
         const g = this._glState();
-        const p = this._glParseFloats(param, 6);
+        const p = this._glParseFloats(param, 7);
         const m = g.meshes[Math.round(p[0])];
         if (!m) return CMD_OK;
         const t = g.three || this._glSetupThree();
@@ -1543,19 +1545,25 @@ class GL3DDriver {
             t.scene.add(inst);
             m._instanced = inst;
             if (!t._instMat) {
-                t._instMat  = new THREE.Matrix4();
-                t._instPos  = new THREE.Vector3();
-                t._instQuat = new THREE.Quaternion();
-                t._instScl  = new THREE.Vector3();
+                t._instMat   = new THREE.Matrix4();
+                t._instPos   = new THREE.Vector3();
+                t._instScl   = new THREE.Vector3();
+                t._instQuat  = new THREE.Quaternion();
+                t._instQuatY = new THREE.Quaternion();
+                t._instQuatZ = new THREE.Quaternion();
                 t._instAxisY = new THREE.Vector3(0, 1, 0);
+                t._instAxisZ = new THREE.Vector3(0, 0, 1);
             }
         }
         const inst = m._instanced;
         const i = inst.count;
         if (i >= inst.instanceMatrix.count) return CMD_OK;   // capacity reached
-        const len = (p[5] == null || p[5] === 0) ? 1 : p[5];
+        const D2R = Math.PI / 180;
+        const len = (p[6] == null || p[6] === 0) ? 1 : p[6];
         t._instPos.set(p[1] || 0, p[2] || 0, p[3] || 0);
-        t._instQuat.setFromAxisAngle(t._instAxisY, (p[4] || 0) * Math.PI / 180);
+        t._instQuatY.setFromAxisAngle(t._instAxisY, (p[4] || 0) * D2R);   // yaw
+        t._instQuatZ.setFromAxisAngle(t._instAxisZ, (p[5] || 0) * D2R);   // pitch (local Z)
+        t._instQuat.multiplyQuaternions(t._instQuatY, t._instQuatZ);      // pitch first, then yaw
         t._instScl.set(len, 1, 1);
         t._instMat.compose(t._instPos, t._instQuat, t._instScl);
         inst.setMatrixAt(i, t._instMat);
