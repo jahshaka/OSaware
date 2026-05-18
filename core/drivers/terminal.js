@@ -530,6 +530,11 @@ class TerminalDriver {
         // Hide all WebGL overlay canvases when program ends
         if (this._glCanvas) this._glCanvas.style.display = 'none';
 
+        // Hide GL.FPS / GL.RFPS overlays — no floating counter at the OK prompt
+        if (this._host && this._host._glDrv && this._host._glDrv._hideFpsOverlays) {
+            this._host._glDrv._hideFpsOverlays();
+        }
+
         // Hide and clear the 2D gfx canvas so terminal text is visible again
         if (this._gfx) {
             this._gfxClearImages();
@@ -1305,7 +1310,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1779092615';
+                    return '1779106232';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,

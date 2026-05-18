@@ -2707,6 +2707,7 @@ class Interpreter {
         bus.on('gl.fogoff',            ()  => gl.cmdGL_FOGOFF());
         bus.on('gl.sphere',            (m) => gl.cmdGL_SPHERE(m.param));
         bus.on('gl.box',               (m) => gl.cmdGL_BOX(m.param));
+        bus.on('gl.polyhedron',        (m) => gl.cmdGL_POLYHEDRON(m.param));
         bus.on('gl.load',              (m) => gl.cmdGL_LOAD(m.param));
         bus.on('gl.chrome',            (m) => gl.cmdGL_CHROME(m.param));
         bus.on('gl.debug',             ()  => gl.cmdGLDEBUG());
@@ -2837,6 +2838,7 @@ class Interpreter {
     cmdGL_FOGOFF()             { return this.kernel.post({syscall:'gl.fogoff'}); }
     cmdGL_SPHERE(p)            { return this.kernel.post({syscall:'gl.sphere',param:p}); }
     cmdGL_BOX(p)               { return this.kernel.post({syscall:'gl.box',param:p}); }
+    cmdGL_POLYHEDRON(p)        { return this.kernel.post({syscall:'gl.polyhedron',param:p}); }
     cmdGL_LOAD(p)              { return this.kernel.post({syscall:'gl.load',param:p}); }
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
 
@@ -3531,6 +3533,7 @@ class Interpreter {
             ['GL.FOGOFF',      0,  ()  => this.cmdGL_FOGOFF()],
             ['GL.SPHERE',      0,  (p) => this.cmdGL_SPHERE(p),        1],
             ['GL.BOX',         0,  (p) => this.cmdGL_BOX(p),           1],
+            ['GL.POLYHEDRON',  0,  (p) => this.cmdGL_POLYHEDRON(p),    1],
             ['GL.LOAD',        0,  (p) => this.cmdGL_LOAD(p),          1],
             ['GL.CHROME',      0,  (p) => this.cmdGL_CHROME(p),        1],
             ['GL.NORMALMAP',   0,  (p) => this.cmdGL_NORMALMAP(p),     1],

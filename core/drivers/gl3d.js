@@ -877,6 +877,19 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+    // Hide both FPS overlays and stop the RFPS rAF loop. Called from the
+    // terminal's _onProgramStop so a program that ended (or was Ctrl+C'd)
+    // mid-flight never leaves a floating counter on screen for the next
+    // program / OK prompt.
+    _hideFpsOverlays() {
+        if (this._fpsDiv) {
+            this._fpsDiv.style.display = 'none';
+            if (this._gl) this._gl.fpsOn = false;
+        }
+        if (this._rfpsDiv) this._rfpsDiv.style.display = 'none';
+        if (this._rfpsRAF) { cancelAnimationFrame(this._rfpsRAF); this._rfpsRAF = 0; }
+    }
+
     // GL.RFPS flag — 1: show a "Frames per second: N" overlay measured against
     // requestAnimationFrame (true painted-frame rate); 0: hide it.
     // Independent of GL command activity — keeps ticking even when BASIC is
@@ -1497,6 +1510,192 @@ class GL3DDriver {
         const mesh3 = new THREE.Mesh(geo, mat);
         mesh3.castShadow    = false;
         mesh3.receiveShadow = false;
+        t.scene.add(mesh3);
+
+        const id = g.nextId++;
+        const fakeMesh = { id, verts:[], faces:[], colour:[r,gv,b],
+            shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
+            tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
+            _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
+        g.meshes[id] = fakeMesh;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+// GL.POLYHEDRON type$, radius — Kepler–Poinsot star polyhedron.
+// `type$` is one of:
+//   "SSD" — small stellated dodecahedron  {5/2, 5}  (12 stubby pentagonal pyramids on an inner dodec)
+//   "GSD" — great stellated dodecahedron  {5/2, 3}  (12 sharp pentagonal pyramids on a smaller inner dodec)
+//   "GI"  — great icosahedron             {3, 5/2}  (20 triangular pyramids on an inner icos)
+//   "GD"  — great dodecahedron            {5, 5/2}  (icos with inward triangular dimples on each face)
+// `radius` is the circumradius (distance from centre to outermost surface
+// point — spike tip for SSD/GSD/GI, icos vertex for GD).
+// Uses current GL colour / shine / emissive / alpha and mode settings.
+// Each builder produces 60 triangles; visible silhouettes match the standard
+// Kepler–Poinsot proportions to within φ-based golden-ratio scaling.
+    cmdGL_POLYHEDRON(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+
+        // Parse type$ (first arg, string) and radius (second arg, number).
+        const raw = this.trim(String(param||''));
+        if (!raw) return CMD_OK;
+        const ci = raw.indexOf(',');
+        let typeRaw = ci >= 0 ? this.trim(raw.substring(0, ci)) : raw;
+        const restRaw = ci >= 0 ? this.trim(raw.substring(ci+1)) : '';
+        if (typeRaw.startsWith('"') && typeRaw.endsWith('"')) typeRaw = typeRaw.slice(1,-1);
+        else typeRaw = String(this.lookup_(ASS_STRING, typeRaw.toUpperCase()) || typeRaw);
+        const type = String(typeRaw).trim().toUpperCase();
+        const radius = restRaw ? Number(this.evalCalc(restRaw, ASS_NUMBER)) || 1 : 1;
+
+        const phi = (1 + Math.sqrt(5)) / 2;
+        const inv = 1 / phi;
+        const sq3 = Math.sqrt(3);
+        const icosLen = Math.sqrt(1 + phi*phi);
+
+        // ---- Inner polyhedron vertex sets (unit circumradius, before scale) ----
+        const dodecUnit = [
+            [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1],
+            [-1, 1, 1], [-1, 1, -1], [-1, -1, 1], [-1, -1, -1],
+            [0, inv, phi], [0, inv, -phi], [0, -inv, phi], [0, -inv, -phi],
+            [inv, phi, 0], [inv, -phi, 0], [-inv, phi, 0], [-inv, -phi, 0],
+            [phi, 0, inv], [phi, 0, -inv], [-phi, 0, inv], [-phi, 0, -inv],
+        ].map(v => [v[0]/sq3, v[1]/sq3, v[2]/sq3]);
+
+        const icosUnit = [
+            [0, 1, phi], [0, 1, -phi], [0, -1, phi], [0, -1, -phi],
+            [1, phi, 0], [1, -phi, 0], [-1, phi, 0], [-1, -phi, 0],
+            [phi, 0, 1], [phi, 0, -1], [-phi, 0, 1], [-phi, 0, -1],
+        ].map(v => [v[0]/icosLen, v[1]/icosLen, v[2]/icosLen]);
+
+        // Face normals (unit length) for each base polyhedron:
+        // Dodec faces: 12 directions (permuted icos-vertex set — see GSD bug
+        //   from earlier audit; the standard icos set (0,±1,±φ) is wrong for
+        //   the dodec vertex convention above).
+        const dodecFaceNormals = [
+            [0, phi, 1], [0, phi, -1], [0, -phi, 1], [0, -phi, -1],
+            [1, 0, phi], [-1, 0, phi], [1, 0, -phi], [-1, 0, -phi],
+            [phi, 1, 0], [phi, -1, 0], [-phi, 1, 0], [-phi, -1, 0],
+        ].map(n => [n[0]/icosLen, n[1]/icosLen, n[2]/icosLen]);
+
+        // Icos faces: 20 outward normal directions. NOT just the dodec vertex
+        // set — for the standard-Cartesian icos/dodec coords used here, those
+        // aren't truly dual; the icos face normals are the X↔Y-swapped variant
+        // of the dodec verts. Verified analytically: face {v0,v2,v8} has
+        // centroid at (1/φ, 0, φ)/√3, NOT (φ, 0, 1/φ)/√3 (a dodec vertex dir).
+        // 8 cube corners + 12 swapped-φ directions = 20 face normals.
+        const icosFaceNormals = [
+            [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1],
+            [-1, 1, 1], [-1, 1, -1], [-1, -1, 1], [-1, -1, -1],
+            [0, phi, inv], [0, phi, -inv], [0, -phi, inv], [0, -phi, -inv],
+            [inv, 0, phi], [-inv, 0, phi], [inv, 0, -phi], [-inv, 0, -phi],
+            [phi, inv, 0], [phi, -inv, 0], [-phi, inv, 0], [-phi, -inv, 0],
+        ].map(n => {
+            const m = Math.sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            return [n[0]/m, n[1]/m, n[2]/m];
+        });
+
+        // ---- Pick configuration for the requested polyhedron ----
+        // innerScale: scale factor on unit-circumradius inner verts.
+        // faceVerts:  5 (pentagon base) or 3 (triangle base).
+        // spikeDist:  distance from origin to spike tip along face normal.
+        //             >0 → outward stellation,  >0 but < face_inradius → inward dimple.
+        let innerVerts, faceNormals, faceVerts, spikeDist;
+        switch (type) {
+        case 'SSD':
+            // Spike tip at radius; inner dodec sized so its inradius·φ ≈ radius.
+            innerVerts  = dodecUnit.map(v => [v[0]*(radius/phi), v[1]*(radius/phi), v[2]*(radius/phi)]);
+            faceNormals = dodecFaceNormals;
+            faceVerts   = 5;
+            spikeDist   = radius;
+            break;
+        case 'GSD':
+            innerVerts  = dodecUnit.map(v => [v[0]*(radius/(phi*phi)), v[1]*(radius/(phi*phi)), v[2]*(radius/(phi*phi))]);
+            faceNormals = dodecFaceNormals;
+            faceVerts   = 5;
+            spikeDist   = radius;
+            break;
+        case 'GI':
+            // 20 triangular pyramids on a small inner icos; spike tips at radius.
+            // Use the same φ² shrink as GSD so the spikes read as sharp star-points
+            // rather than a knobbly icos — short spikes were misreading as
+            // "backwards faces" from grazing angles.
+            innerVerts  = icosUnit.map(v => [v[0]*(radius/(phi*phi)), v[1]*(radius/(phi*phi)), v[2]*(radius/(phi*phi))]);
+            faceNormals = icosFaceNormals;
+            faceVerts   = 3;
+            spikeDist   = radius;
+            break;
+        case 'GD':
+            // Icos at full radius; each triangular face dimples inward.
+            // Icos inradius ≈ 0.795·R; place dimple bottom at ≈ 0.4·R so the
+            // valleys are deep but don't pierce the opposite face.
+            innerVerts  = icosUnit.map(v => [v[0]*radius, v[1]*radius, v[2]*radius]);
+            faceNormals = icosFaceNormals;
+            faceVerts   = 3;
+            spikeDist   = radius * 0.40;
+            break;
+        default:
+            this.appendLine('Unknown polyhedron type: ' + type + ' (use SSD, GSD, GI, or GD)', 1);
+            return CMD_OK;
+        }
+
+        // ---- Build geometry: for each face, fan from spike tip to base edges ----
+        const positions = [];
+        for (const n of faceNormals) {
+            // Top `faceVerts` verts by dot with n form this face's base.
+            const sorted = innerVerts.map(v => ({ v, d: v[0]*n[0] + v[1]*n[1] + v[2]*n[2] }))
+                                     .sort((a, b) => b.d - a.d)
+                                     .slice(0, faceVerts)
+                                     .map(x => x.v);
+            const cx = sorted.reduce((s, v) => s + v[0], 0) / faceVerts;
+            const cy = sorted.reduce((s, v) => s + v[1], 0) / faceVerts;
+            const cz = sorted.reduce((s, v) => s + v[2], 0) / faceVerts;
+            // (r0, r1, n) right-handed basis in the face plane — angles ↑ go CCW from +n side.
+            let r0x = sorted[0][0]-cx, r0y = sorted[0][1]-cy, r0z = sorted[0][2]-cz;
+            const r0len = Math.sqrt(r0x*r0x + r0y*r0y + r0z*r0z);
+            r0x/=r0len; r0y/=r0len; r0z/=r0len;
+            const r1x = n[1]*r0z - n[2]*r0y;
+            const r1y = n[2]*r0x - n[0]*r0z;
+            const r1z = n[0]*r0y - n[1]*r0x;
+            const ordered = sorted.map(v => {
+                const dx = v[0]-cx, dy = v[1]-cy, dz = v[2]-cz;
+                const a = dx*r0x + dy*r0y + dz*r0z;
+                const b = dx*r1x + dy*r1y + dz*r1z;
+                return { v, ang: Math.atan2(b, a) };
+            }).sort((a, b) => a.ang - b.ang).map(x => x.v);
+            const tx = n[0]*spikeDist, ty = n[1]*spikeDist, tz = n[2]*spikeDist;
+            // Same winding for outward spike and inward dimple. For a dimple,
+            // the wall's outward normal points INTO the dimple opening (toward
+            // the viewer looking in) — same +n hemisphere as an outward spike's
+            // side. (v0,v1,tip) with CCW base from +n side gives this in both cases.
+            for (let k = 0; k < faceVerts; k++) {
+                const v0 = ordered[k];
+                const v1 = ordered[(k+1) % faceVerts];
+                positions.push(v0[0], v0[1], v0[2],
+                               v1[0], v1[1], v1[2],
+                               tx, ty, tz);
+            }
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.computeVertexNormals();
+
+        const [r, gv, b] = g.colour;
+        const color = new THREE.Color(r/255, gv/255, b/255);
+        const opacity = g.alpha;
+        const transparent = opacity < 1.0;
+        const mat = (g.mode === 'wire')
+            ? new THREE.MeshBasicMaterial({ color, wireframe: true, transparent, opacity })
+            : new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide,
+                shininess: g.shine, transparent, opacity,
+                emissive: new THREE.Color(g.emissive[0]/255, g.emissive[1]/255, g.emissive[2]/255),
+                depthWrite: !transparent });
+
+        const mesh3 = new THREE.Mesh(geo, mat);
+        mesh3.castShadow    = true;
+        mesh3.receiveShadow = true;
         t.scene.add(mesh3);
 
         const id = g.nextId++;
