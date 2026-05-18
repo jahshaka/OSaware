@@ -37,6 +37,7 @@ class Interpreter {
         this._timer_is_raf  = false;  // true when execute_timer is a rAF handle (not setTimeout)
         this._glJustRendered = false; // set by _glRenderFrame, consumed by _scheduleNextTick
         this._resizePending  = false; // pauses BASIC after FULLSCREEN/OVERSCAN until canvas dims settle
+        this._fullscreenSavedState = undefined; // single-slot save for FULLSCREEN ENTER/EXIT
         this.processing_line = 0;
         this.done           = 0;
         this.status         = -1;
@@ -1538,17 +1539,45 @@ class Interpreter {
     // TIER 1 COMMANDS  (Amiga BASIC parity additions)
     // -----------------------------------------------------------------------
 
-    // FULLSCREEN [ON|OFF] — toggle or explicitly set fullscreen mode.
+    // FULLSCREEN [ON|OFF|ENTER|EXIT] — set, toggle, or app-bracket fullscreen mode.
+    //
+    // ON / OFF / (no arg)  — direct set/toggle (legacy behaviour)
+    // ENTER                — save the user's current fullscreen state (once, lazily)
+    //                        and switch to fullscreen. Idempotent across repeated calls
+    //                        — re-entering an app's start menu won't clobber the save.
+    // EXIT                 — restore the saved state and clear the save slot. No-op
+    //                        if nothing was ever saved.
+    //
     // The CSS class flip is synchronous, but the resize chain that updates
     // canvas.width/height is async (~50ms outer + ~60ms inner debounce in
-    // boot.js's onResize). We pause BASIC execution between those points so
-    // subsequent reads of WIDTH/HEIGHT always see the post-resize dimensions
-    // — otherwise programs like TRON/MAZE3D race the resize and lay out the
-    // minimap against stale dimensions.
+    // boot.js's onResize). _applyFullscreen pauses BASIC execution between
+    // those points so subsequent reads of WIDTH/HEIGHT always see the post-
+    // resize dimensions. Skipped entirely when the requested state matches
+    // the current state (no flicker, no useless pause).
     cmdFULLSCREEN(param) {
         const arg = this.trim(String(param || '')).toUpperCase();
         const body = document.body;
+        if (arg === 'ENTER') {
+            if (this._fullscreenSavedState === undefined) {
+                this._fullscreenSavedState = body.classList.contains('fullscreen');
+            }
+            return this._applyFullscreen('ON');
+        }
+        if (arg === 'EXIT') {
+            if (this._fullscreenSavedState !== undefined) {
+                const target = this._fullscreenSavedState ? 'ON' : 'OFF';
+                this._fullscreenSavedState = undefined;
+                return this._applyFullscreen(target);
+            }
+            return CMD_OK;
+        }
+        return this._applyFullscreen(arg);
+    }
+
+    _applyFullscreen(arg) {
+        const body = document.body;
         const btn  = document.getElementById('fs-toggle');
+        const wasFs = body.classList.contains('fullscreen');
         // Exit overscan if active when entering fullscreen
         body.classList.remove('overscan');
         const osBtn = document.getElementById('os-toggle');
@@ -1558,7 +1587,8 @@ class Interpreter {
         else if (arg === 'OFF') { body.classList.remove('fullscreen'); isFs = false; }
         else                    { isFs = body.classList.toggle('fullscreen'); }
         if (btn) btn.textContent = isFs ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
-        this._beginResizePause(true);
+        // Only run the resize-pause dance if state actually changed.
+        if (isFs !== wasFs) this._beginResizePause(true);
         return CMD_OK;
     }
 
