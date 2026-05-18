@@ -34,6 +34,9 @@ class Interpreter {
 
         // Run-time flags
         this.execute_timer  = 0;
+        this._timer_is_raf  = false;  // true when execute_timer is a rAF handle (not setTimeout)
+        this._glJustRendered = false; // set by _glRenderFrame, consumed by _scheduleNextTick
+        this._resizePending  = false; // pauses BASIC after FULLSCREEN/OVERSCAN until canvas dims settle
         this.processing_line = 0;
         this.done           = 0;
         this.status         = -1;
@@ -185,11 +188,34 @@ class Interpreter {
     // Schedule the next tick via closure (no eval-string).
     _scheduleNextTick() {
         if (this.execute_timer !== 0) return;
+        if (this._resizePending) return;  // resize callback will re-schedule
         // Flush any pending pixel buffer changes before yielding to the browser
         if (this._gfx && this._gfx.dirty) this._gfxFlush();
         const delay = this.sleepy_time > 0 ? this.sleepy_time : this.run_delay;
         this.sleepy_time = 0;
+        // GL render path: when a GL frame just rendered and the requested
+        // delay is short (≤17ms — i.e. "next frame please"), schedule via
+        // requestAnimationFrame so paints align with the display refresh
+        // instead of beating against setTimeout's clamping.
+        if (this._glJustRendered && delay > 0 && delay <= 17 &&
+            typeof requestAnimationFrame === 'function') {
+            this._glJustRendered = false;
+            this._timer_is_raf = true;
+            this.execute_timer = requestAnimationFrame(() => this.tick(1));
+            return;
+        }
+        this._glJustRendered = false;
+        this._timer_is_raf = false;
         this.execute_timer = setTimeout(() => this.tick(1), delay);
+    }
+
+    // Cancel whichever kind of timer (setTimeout or rAF) is currently scheduled.
+    _cancelNextTick() {
+        if (!this.execute_timer) return;
+        if (this._timer_is_raf) cancelAnimationFrame(this.execute_timer);
+        else clearTimeout(this.execute_timer);
+        this.execute_timer = 0;
+        this._timer_is_raf = false;
     }
 
     // -----------------------------------------------------------------------
@@ -1513,6 +1539,12 @@ class Interpreter {
     // -----------------------------------------------------------------------
 
     // FULLSCREEN [ON|OFF] — toggle or explicitly set fullscreen mode.
+    // The CSS class flip is synchronous, but the resize chain that updates
+    // canvas.width/height is async (~50ms outer + ~60ms inner debounce in
+    // boot.js's onResize). We pause BASIC execution between those points so
+    // subsequent reads of WIDTH/HEIGHT always see the post-resize dimensions
+    // — otherwise programs like TRON/MAZE3D race the resize and lay out the
+    // minimap against stale dimensions.
     cmdFULLSCREEN(param) {
         const arg = this.trim(String(param || '')).toUpperCase();
         const body = document.body;
@@ -1526,9 +1558,7 @@ class Interpreter {
         else if (arg === 'OFF') { body.classList.remove('fullscreen'); isFs = false; }
         else                    { isFs = body.classList.toggle('fullscreen'); }
         if (btn) btn.textContent = isFs ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
-        setTimeout(() => {
-            if (window._osaware_resize) window._osaware_resize(true);
-        }, 50);
+        this._beginResizePause(true);
         return CMD_OK;
     }
 
@@ -1545,10 +1575,25 @@ class Interpreter {
         else if (arg === 'OFF') { body.classList.remove('overscan'); isOs = false; }
         else                    { isOs = body.classList.toggle('overscan'); }
         if (btn) btn.textContent = isOs ? 'EXIT OVERSCAN' : 'OVERSCAN';
-        setTimeout(() => {
-            if (window._osaware_resize) window._osaware_resize(true);
-        }, 50);
+        this._beginResizePause(true);
         return CMD_OK;
+    }
+
+    // Pause the BASIC tick loop until the async _osaware_resize chain has
+    // applied new canvas dimensions, then resume scheduling. Shared between
+    // cmdFULLSCREEN and cmdOVERSCAN. Falls back to a plain setTimeout if the
+    // host page never wired up window._osaware_resize.
+    _beginResizePause(fromFullscreen) {
+        const resume = () => {
+            this._resizePending = false;
+            if (this.running) this._scheduleNextTick();
+        };
+        this._resizePending = true;
+        this._cancelNextTick();
+        setTimeout(() => {
+            if (window._osaware_resize) window._osaware_resize(!!fromFullscreen, resume);
+            else resume();
+        }, 50);
     }
 
     cmdUI(param) {
@@ -2594,6 +2639,7 @@ class Interpreter {
         bus.on('gl.ambient',           (m) => gl.cmdGL_AMBIENT(m.param));
         bus.on('gl.bloom',             (m) => gl.cmdGL_BLOOM(m.param));
         bus.on('gl.fps',               (m) => gl.cmdGL_FPS(m.param));
+        bus.on('gl.rfps',              (m) => gl.cmdGL_RFPS(m.param));
         bus.on('gl.aa',                (m) => gl.cmdGL_AA(m.param));
         bus.on('gl.begin',             ()  => gl.cmdGL_BEGIN());
         bus.on('gl.vertex',            (m) => gl.cmdGL_VERTEX(m.param));
@@ -2621,6 +2667,7 @@ class Interpreter {
         bus.on('gl.metalness',         (m) => gl.cmdGL_METALNESS(m.param));
         bus.on('gl.envmap',            (m) => gl.cmdGL_ENVMAP(m.param));
         bus.on('gl.pointlight',        (m) => gl.cmdGL_POINTLIGHT(m.param));
+        bus.on('gl.headlight',         (m) => gl.cmdGL_HEADLIGHT(m.param));
         bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
@@ -2722,6 +2769,7 @@ class Interpreter {
     cmdGL_AMBIENT(p)           { return this.kernel.post({syscall:'gl.ambient',param:p}); }
     cmdGL_BLOOM(p)             { return this.kernel.post({syscall:'gl.bloom',param:p}); }
     cmdGL_FPS(p)               { return this.kernel.post({syscall:'gl.fps',param:p}); }
+    cmdGL_RFPS(p)              { return this.kernel.post({syscall:'gl.rfps',param:p}); }
     cmdGL_AA(p)                { return this.kernel.post({syscall:'gl.aa',param:p}); }
     cmdGL_BEGIN()              { return this.kernel.post({syscall:'gl.begin'}); }
     cmdGL_VERTEX(p)            { return this.kernel.post({syscall:'gl.vertex',param:p}); }
@@ -2749,6 +2797,7 @@ class Interpreter {
     cmdGL_METALNESS(p)         { return this.kernel.post({syscall:'gl.metalness',param:p}); }
     cmdGL_ENVMAP(p)            { return this.kernel.post({syscall:'gl.envmap',param:p}); }
     cmdGL_POINTLIGHT(p)        { return this.kernel.post({syscall:'gl.pointlight',param:p}); }
+    cmdGL_HEADLIGHT(p)         { return this.kernel.post({syscall:'gl.headlight',param:p}); }
     cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
@@ -2829,7 +2878,7 @@ class Interpreter {
             try { result = this.fs.loadFile(fn, this); } catch (e) { result = -1; }
             if (result && typeof result.then === 'function') {       // async load — pause execution
                 this.want_ai = 1;
-                if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
+                this._cancelNextTick();
                 result.then((a) => {
                     this.want_ai = 0;
                     if (a && typeof a !== 'number') this._aiSystemFromFile(a, fn);
@@ -2955,7 +3004,7 @@ class Interpreter {
 
         // pause BASIC execution while the request is in flight
         this.want_ai = 1;
-        if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
+        this._cancelNextTick();
         const finish = () => {
             this.want_ai = 0;
             if (this.running) this._scheduleNextTick();
@@ -3105,10 +3154,7 @@ class Interpreter {
 
         // Pause the BASIC execution loop.
         this.want_ai = 1;
-        if (this.execute_timer) {
-            clearTimeout(this.execute_timer);
-            this.execute_timer = 0;
-        }
+        this._cancelNextTick();
 
         // Keep the conversation history bounded (token-limit / cost). Trim oldest
         // turns, keeping the array starting on a 'user' message.
@@ -3419,6 +3465,7 @@ class Interpreter {
             ['GL.AMBIENT',     0,  (p) => this.cmdGL_AMBIENT(p),       1],
             ['GL.BLOOM',       0,  (p) => this.cmdGL_BLOOM(p),         1],
             ['GL.FPS',         0,  (p) => this.cmdGL_FPS(p),           1],
+            ['GL.RFPS',        0,  (p) => this.cmdGL_RFPS(p),          1],
             ['GL.AA',          0,  (p) => this.cmdGL_AA(p),            1],
             ['GL.LOOKAT',      0,  (p) => this.cmdGL_LOOKAT(p),        1],
             ['GL.CAMERA',      0,  (p) => this.cmdGL_CAMERA(p),        1],
@@ -3444,6 +3491,7 @@ class Interpreter {
             ['GL.ALPHA',       0,  (p) => this.cmdGL_ALPHA(p),         1],            ['GL.WIRECOLOR',   0,  (p) => this.cmdGL_WIRECOLOR(p),     1],
             ['GL.TEXTURE',     0,  (p) => this.cmdGL_TEXTURE(p),       1],
             ['GL.POINTLIGHT',  0,  (p) => this.cmdGL_POINTLIGHT(p),    1],
+            ['GL.HEADLIGHT',   0,  (p) => this.cmdGL_HEADLIGHT(p),     1],
             ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
@@ -3947,9 +3995,8 @@ class Interpreter {
     }
 
     kill() {
-        clearTimeout(this.execute_timer);
+        this._cancelNextTick();
         clearTimeout(this.cursor_timer);
-        this.execute_timer = 0;
         this.cursor_timer  = 0;
         // Update kernel process state
         if (this.os) {
@@ -4161,7 +4208,7 @@ class Interpreter {
     // FIX: bounds check added before the skip-empty-lines loop.
     // -----------------------------------------------------------------------
     tick(a) {
-        if (this.want_keypress || this.want_input || this._glLoadPending) return;
+        if (this.want_keypress || this.want_input || this._glLoadPending || this._resizePending) return;
 
         // Check for pending ON COLLISION GOSUB event (set by the animation timer).
         if (this._collisionPending && this._onCollisionLine && this.running &&
@@ -4252,7 +4299,7 @@ class Interpreter {
             for (let _b = 0; _b < 100000 && this.running && !iStopped; _b++) {
                 if (_batchDeadline > 0 && (_b & 63) === 0 && performance.now() > _batchDeadline) break;
                 // Check yield conditions BEFORE executing each statement.
-                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress || this._glLoadPending) break;
+                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress || this._glLoadPending || this._resizePending) break;
                 if (this.line_remaining !== '') break;
                 if (this.lines[this.run_line] !== '') {
                     if (this._trace) this.appendLine('[' + this.run_line + ']', 0);

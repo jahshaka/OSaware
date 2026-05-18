@@ -102,6 +102,8 @@ class GL3DDriver {
             this._glCanvas = null;
         }
         if (this._fpsDiv) { try { this._fpsDiv.remove(); } catch (e) {} this._fpsDiv = null; }
+        if (this._rfpsRAF) { try { cancelAnimationFrame(this._rfpsRAF); } catch (e) {} this._rfpsRAF = 0; }
+        if (this._rfpsDiv) { try { this._rfpsDiv.remove(); } catch (e) {} this._rfpsDiv = null; }
 
         this._gl = {
             fov:        60,
@@ -192,7 +194,9 @@ class GL3DDriver {
         const W = wrapper.clientWidth, H = wrapper.clientHeight;
         if (W > 0 && H > 0) {
             const t = g.three;
-            const size = t.renderer.getSize(new THREE.Vector2());
+            // Reuse a cached Vector2 — getSize() would otherwise allocate every frame.
+            if (!g._sizeTmp) g._sizeTmp = new THREE.Vector2();
+            const size = t.renderer.getSize(g._sizeTmp);
             if (size.x !== W || size.y !== H) {
                 t.renderer.setSize(W, H);
                 t.camera.aspect = W / H;
@@ -517,7 +521,11 @@ class GL3DDriver {
         const parts = this._glParseFloats(param, 3);
         const r = (parts[0]||0)/255, gv = (parts[1]||0)/255, b = (parts[2]||0)/255;
         g.clearR = parts[0]||0; g.clearG = parts[1]||0; g.clearB = parts[2]||0;
-        t.renderer.setClearColor(new THREE.Color(r, gv, b), 1);
+        // Reuse a cached Color — setClearColor accepts a mutable Color, so we
+        // avoid allocating a fresh one per frame.
+        if (!g._clearColor) g._clearColor = new THREE.Color();
+        g._clearColor.setRGB(r, gv, b);
+        t.renderer.setClearColor(g._clearColor, 1);
         t.renderer.clear();
         return CMD_OK;
     }
@@ -760,7 +768,10 @@ class GL3DDriver {
     }
 
     // Render one frame — through the bloom EffectComposer if active, else direct.
-    // Also drives the optional FPS overlay (set up by GL.FPS).
+    // Also drives the optional ticks/sec overlay (set up by GL.FPS — note this
+    // counts GL.DRAWALL invocations, not painted frames; see GL.RFPS for that).
+    // Sets the kernel's _glJustRendered flag so the next _scheduleNextTick can
+    // promote a short setTimeout to requestAnimationFrame for vsync alignment.
     _glRenderFrame(t) {
         if (this._gl && this._gl.fpsOn && this._fpsDiv) {
             const g = this._gl;
@@ -769,13 +780,14 @@ class GL3DDriver {
             if (!g._fpsLast) g._fpsLast = now;
             const dt = now - g._fpsLast;
             if (dt >= 500) {
-                this._fpsDiv.textContent = 'Frames per second: ' + Math.round(g._fpsFrames * 1000 / dt);
+                this._fpsDiv.textContent = 'Ticks per second: ' + Math.round(g._fpsFrames * 1000 / dt);
                 g._fpsFrames = 0;
                 g._fpsLast = now;
             }
         }
         if (t.composer) t.composer.render();
         else t.renderer.render(t.scene, t.camera);
+        this._glJustRendered = true;
     }
 
     // Ensure an EffectComposer (RenderPass only) exists on `t`. Once active, frames render through
@@ -841,7 +853,9 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-    // GL.FPS flag — 1: show a "Frames per second: N" overlay (top-right); 0: hide it.
+    // GL.FPS flag — 1: show a "Ticks per second: N" overlay (top-right); 0: hide it.
+    // Counts GL.DRAWALL invocations (kernel cadence), NOT painted frames. For
+    // the real, vsync-aligned framerate use GL.RFPS instead.
     // System-level — the counting and the overlay live here, not in BASIC.
     cmdGL_FPS(param) {
         const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
@@ -850,8 +864,8 @@ class GL3DDriver {
         if (on) {
             if (!this._fpsDiv) {
                 const d = document.createElement('div');
-                d.style.cssText = 'position:fixed;top:6px;right:10px;font-family:monospace;font-size:14px;color:#3f7;text-shadow:0 0 4px #000,0 0 4px #000;z-index:99999;pointer-events:none;';
-                d.textContent = 'Frames per second: --';
+                d.style.cssText = 'position:fixed;top:28px;right:10px;font-family:monospace;font-size:14px;color:#3f7;text-shadow:0 0 4px #000,0 0 4px #000;z-index:99999;pointer-events:none;';
+                d.textContent = 'Ticks per second: --';
                 document.body.appendChild(d);
                 this._fpsDiv = d;
             }
@@ -859,6 +873,48 @@ class GL3DDriver {
             g._fpsFrames = 0; g._fpsLast = 0;
         } else if (this._fpsDiv) {
             this._fpsDiv.style.display = 'none';
+        }
+        return CMD_OK;
+    }
+
+    // GL.RFPS flag — 1: show a "Frames per second: N" overlay measured against
+    // requestAnimationFrame (true painted-frame rate); 0: hide it.
+    // Independent of GL command activity — keeps ticking even when BASIC is
+    // idle in a SLEEP, so you see what the browser is actually painting.
+    cmdGL_RFPS(param) {
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        if (on) {
+            if (!this._rfpsDiv) {
+                const d = document.createElement('div');
+                d.style.cssText = 'position:fixed;top:6px;right:10px;font-family:monospace;font-size:14px;color:#3f7;text-shadow:0 0 4px #000,0 0 4px #000;z-index:99999;pointer-events:none;';
+                d.textContent = 'Frames per second: --';
+                document.body.appendChild(d);
+                this._rfpsDiv = d;
+            }
+            this._rfpsDiv.style.display = 'block';
+            this._rfpsFrames = 0;
+            this._rfpsLast = 0;
+            if (this._rfpsRAF) cancelAnimationFrame(this._rfpsRAF);
+            const loop = () => {
+                if (!this._rfpsDiv || this._rfpsDiv.style.display === 'none') {
+                    this._rfpsRAF = 0;
+                    return;
+                }
+                this._rfpsFrames = (this._rfpsFrames || 0) + 1;
+                const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+                if (!this._rfpsLast) this._rfpsLast = now;
+                const dt = now - this._rfpsLast;
+                if (dt >= 500) {
+                    this._rfpsDiv.textContent = 'Frames per second: ' + Math.round(this._rfpsFrames * 1000 / dt);
+                    this._rfpsFrames = 0;
+                    this._rfpsLast = now;
+                }
+                this._rfpsRAF = requestAnimationFrame(loop);
+            };
+            this._rfpsRAF = requestAnimationFrame(loop);
+        } else if (this._rfpsDiv) {
+            this._rfpsDiv.style.display = 'none';
+            if (this._rfpsRAF) { cancelAnimationFrame(this._rfpsRAF); this._rfpsRAF = 0; }
         }
         return CMD_OK;
     }
@@ -1183,6 +1239,44 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+    // GL.HEADLIGHT x,y,z [, r,g,b [, intensity [, distance]]]
+    // Like GL.POINTLIGHT, but a single cached light (with shadow map) that the
+    // command repositions on every call instead of allocating a new one. The
+    // first call creates the light + 512x512 shadow render target; subsequent
+    // calls only update position/colour/intensity/distance. Designed for the
+    // common "torchlight follows the player" pattern, replacing the per-frame
+    // GL.LIGHTSOFF + GL.POINTLIGHT pair (which was burning a fresh shadow map
+    // every frame). Survives in the scene until GL.LIGHTSOFF / GL.INIT.
+    cmdGL_HEADLIGHT(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 8);
+        const cc = v => Math.max(0, Math.min(255, v)) / 255;
+        const r  = ntok > 3 ? cc(p[3]) : 1;
+        const gv = ntok > 4 ? cc(p[4]) : 1;
+        const b  = ntok > 5 ? cc(p[5]) : 1;
+        const intensity = ntok > 6 ? p[6] : 2;
+        const distance  = ntok > 7 ? p[7] : 10;
+        let light = g._headlight;
+        if (!light) {
+            light = new THREE.PointLight(new THREE.Color(r, gv, b), intensity, distance, 1);
+            light.castShadow = true;
+            light.shadow.mapSize.width  = 512;
+            light.shadow.mapSize.height = 512;
+            light.shadow.bias = -0.002;
+            t.scene.add(light);
+            g._headlight = light;
+        } else {
+            light.color.setRGB(r, gv, b);
+            light.intensity = intensity;
+            light.distance  = distance;
+        }
+        light.position.set(p[0]||0, p[1]||0, p[2]||0);
+        return CMD_OK;
+    }
+
     // GL.RECTLIGHT x,y,z, w,h [, r,g,b [, intensity]] — rectangular area light, faces straight down.
     // NOTE: RectAreaLight only affects MeshStandardMaterial / MeshPhysicalMaterial (e.g. loaded GLTF
     // models) — it does NOT light MeshPhong geometry (GL.BEGIN/END meshes). Cleared by GL.LIGHTSOFF.
@@ -1209,7 +1303,7 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-// GL.LIGHTSOFF — remove all point lights from scene
+// GL.LIGHTSOFF — remove all point lights, rect lights, and the headlight
     cmdGL_LIGHTSOFF() {
         const g = this._glState();
         if (g.three && g.pointLights) {
@@ -1223,6 +1317,13 @@ class GL3DDriver {
         if (g.three && g.rectLights) {
             for (const l of g.rectLights) { l.dispose(); g.three.scene.remove(l); }
             g.rectLights = [];
+        }
+        if (g.three && g._headlight) {
+            const l = g._headlight;
+            if (l.shadow && l.shadow.map) l.shadow.map.dispose();
+            l.dispose();
+            g.three.scene.remove(l);
+            g._headlight = null;
         }
         return CMD_OK;
     }

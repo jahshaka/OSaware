@@ -354,7 +354,12 @@
       // Debounced to avoid thrashing during drag-resize.
       // -----------------------------------------------------------------------
       let resizeTimer;
-      function onResize(fromFullscreen) {
+      // Callbacks queued by callers that want to be notified once the
+      // (debounced) resize has actually applied new dimensions. Used by
+      // cmdFULLSCREEN / cmdOVERSCAN to pause BASIC until WIDTH/HEIGHT update.
+      let resizeDoneCallbacks = [];
+      function onResize(fromFullscreen, done) {
+        if (typeof done === 'function') resizeDoneCallbacks.push(done);
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
           // Clear the suppress flag now — if we were suppressed we still want
@@ -388,6 +393,12 @@
           // Sync the Three.js 2D and sprite canvases to the new size
           if (oEmulator._gfxSyncSize) oEmulator._gfxSyncSize();
           if (oEmulator._sprSyncSize) oEmulator._sprSyncSize();
+
+          // Fire any queued done callbacks now that dimensions have settled.
+          // Drain even when we bail out of the re-init below.
+          const _doneCbs = resizeDoneCallbacks;
+          resizeDoneCallbacks = [];
+          for (const cb of _doneCbs) { try { cb(); } catch (e) {} }
 
           // Never re-init if:
           // 1. A program is running

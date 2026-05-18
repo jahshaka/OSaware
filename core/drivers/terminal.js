@@ -651,7 +651,8 @@ class TerminalDriver {
         if (e.ctrlKey && (kc === 67 || kc === 99 || kc === 90 || kc === 122)) {
             if (this.running) {
                 this.removeCursor();
-                clearTimeout(this.execute_timer);
+                if (this._host && this._host._cancelNextTick) this._host._cancelNextTick();
+                else clearTimeout(this.execute_timer);
                 this.running        = 0;
                 this.just_stopped   = 1;
                 this.want_input     = 0;
@@ -1304,7 +1305,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1778649660';
+                    return '1779090376';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,
