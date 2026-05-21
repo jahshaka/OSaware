@@ -165,7 +165,7 @@ class GL3DDriver {
         const scene = new THREE.Scene();
 
         // Camera
-        const camera = new THREE.PerspectiveCamera(g.fov, W / H, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(g.fov, W / H, 0.1, g.far || 1000);
         const [cx,cy,cz] = g.cam;
         const [lx,ly,lz] = g.lookat;
         camera.position.set(cx, cy, cz);
@@ -531,11 +531,14 @@ class GL3DDriver {
     }
 
     cmdGL_PERSPECTIVE(param) {
-        const fov = Number(this.evalCalc(this.trim(String(param||'60')), ASS_NUMBER));
         const g = this._glState();
-        g.fov = fov || 60;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 2);
+        g.fov = p[0] || 60;
+        if (ntok > 1 && p[1] > 0) g.far = p[1];   // optional far clip plane
         if (g.three) {
             g.three.camera.fov = g.fov;
+            if (g.far) g.three.camera.far = g.far;
             g.three.camera.updateProjectionMatrix();
         }
         return CMD_OK;
@@ -547,7 +550,7 @@ class GL3DDriver {
         g.cam = [p[0]||0, p[1]||0, p[2]||-5];
         if (g.three) {
             g.three.camera.position.set(g.cam[0], g.cam[1], g.cam[2]);
-            g.three.camera.lookAt(g.lookat[0], g.lookat[1], g.lookat[2]);
+            this._glReorientCamera();
         }
         return CMD_OK;
     }
@@ -556,10 +559,49 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 3);
         const g = this._glState();
         g.lookat = [p[0]||0, p[1]||0, p[2]||0];
-        if (g.three) {
-            g.three.camera.lookAt(g.lookat[0], g.lookat[1], g.lookat[2]);
-        }
+        if (g.three) this._glReorientCamera();
         return CMD_OK;
+    }
+
+    // GL.CAMERAROLL deg — bank the camera, rolling it `deg` degrees about its
+    // view axis (0 = level horizon). Persists until changed; GL.INIT resets it.
+    // Used by flight-style programs (SKYFOX) so the horizon tilts on a turn.
+    cmdGL_CAMERAROLL(param) {
+        const g = this._glState();
+        const deg = Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)) || 0;
+        g.camRoll = deg * Math.PI / 180;
+        if (g.three) this._glReorientCamera();
+        return CMD_OK;
+    }
+
+    // Aim the camera at g.lookat, applying g.camRoll as a bank about the view
+    // axis — rolls the `up` vector so Three.js lookAt tilts the whole horizon.
+    _glReorientCamera() {
+        const g = this._gl;
+        if (!g || !g.three) return;
+        const cam  = g.three.camera;
+        const lk   = g.lookat || [0, 0, 0];
+        const roll = g.camRoll || 0;
+        if (!roll) {
+            cam.up.set(0, 1, 0);
+            cam.lookAt(lk[0], lk[1], lk[2]);
+            return;
+        }
+        const cp = g.cam || [0, 0, 0];
+        let fx = lk[0]-cp[0], fy = lk[1]-cp[1], fz = lk[2]-cp[2];
+        const fl = Math.sqrt(fx*fx + fy*fy + fz*fz) || 1;
+        fx/=fl; fy/=fl; fz/=fl;
+        // right = normalize(forward × worldUp), worldUp = (0,1,0)
+        let rx = -fz, rz = fx;
+        const rl = Math.sqrt(rx*rx + rz*rz) || 1;
+        rx/=rl; rz/=rl;
+        // trueUp = right × forward  (right has zero Y component)
+        const ux = -rz*fy;
+        const uy = rz*fx - rx*fz;
+        const uz = rx*fy;
+        const c = Math.cos(roll), s = Math.sin(roll);
+        cam.up.set(ux*c + rx*s, uy*c, uz*c + rz*s);
+        cam.lookAt(lk[0], lk[1], lk[2]);
     }
 
     cmdGL_COLOUR(param) {
@@ -698,8 +740,13 @@ class GL3DDriver {
         m.rx = p[1]||0; m.ry = p[2]||0; m.rz = p[3]||0;
         if (m._threeObjects) {
             const D = Math.PI/180;
+            // YXZ order = yaw, then pitch and roll about the craft's OWN
+            // (body) axes — the standard aerospace sequence. Pitch stays a
+            // clean nose-up/down no matter which way the craft is heading.
+            // Single-axis rotations are identical under any order, so other
+            // programs (TRON, decorative spinners) are unaffected.
             for (const obj of m._threeObjects)
-                obj.rotation.set(m.rx*D, m.ry*D, m.rz*D);
+                obj.rotation.set(m.rx*D, m.ry*D, m.rz*D, 'YXZ');
         }
         return CMD_OK;
     }
@@ -784,6 +831,16 @@ class GL3DDriver {
                 g._fpsFrames = 0;
                 g._fpsLast = now;
             }
+        }
+        if (this._gl && (this._gl._clouds || this._gl._sky)) {
+            const nw = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+            if (this._gl._clouds) {
+                const cl = this._gl._clouds;
+                cl.material.uniforms.uTime.value = nw * 0.001;
+                cl.position.x = t.camera.position.x;   // cloud box follows the
+                cl.position.z = t.camera.position.z;   // camera; noise is world-space
+            }
+            if (this._gl._sky) this._gl._sky.material.uniforms.time.value = nw * 0.001;
         }
         if (t.composer) t.composer.render();
         else t.renderer.render(t.scene, t.camera);
@@ -1120,11 +1177,20 @@ class GL3DDriver {
         const val = Math.max(0, p[1] !== undefined ? p[1] : 1.0);
         m.emissiveIntensity = val;
         if (m._threeObjects) {
+            // traverse() so this also reaches the child meshes of a GL.LOAD
+            // model — its _threeObjects[0] is a pivot Group, not a mesh, so a
+            // flat .material check would silently skip every loaded model.
             for (const obj of m._threeObjects) {
-                if (obj.material && obj.material.emissiveIntensity !== undefined) {
-                    obj.material.emissiveIntensity = val;
-                    obj.material.needsUpdate = true;
-                }
+                obj.traverse((c) => {
+                    if (!c.material) return;
+                    const mats = Array.isArray(c.material) ? c.material : [c.material];
+                    for (const mt of mats) {
+                        if (mt && mt.emissiveIntensity !== undefined) {
+                            mt.emissiveIntensity = val;
+                            mt.needsUpdate = true;
+                        }
+                    }
+                });
             }
         }
         return CMD_OK;
@@ -1429,6 +1495,13 @@ class GL3DDriver {
         t.scene.fog = new THREE.Fog(fogColor, p[3]||5, p[4]||20);
         t.renderer.setClearColor(fogColor, 1);
         g.fog = { r:p[0], g:p[1], b:p[2], near:p[3], far:p[4] };
+        // keep GL.TERRAIN's own (shader-baked) fog in sync with the scene fog
+        if (g._terrain && g._terrain.material.uniforms && g._terrain.material.uniforms.uFog) {
+            const tu = g._terrain.material.uniforms;
+            tu.uFog.value.copy(fogColor);
+            tu.uFogNear.value = p[3] || 5;
+            tu.uFogFar.value  = p[4] || 20;
+        }
         return CMD_OK;
     }
 
@@ -1441,7 +1514,360 @@ class GL3DDriver {
             g.three.renderer.setClearColor(new THREE.Color(g.clearR/255, g.clearG/255, g.clearB/255), 1);
         }
         g.fog = null;
+        // push GL.TERRAIN's shader fog out of range so it reads as off too
+        if (g._terrain && g._terrain.material.uniforms && g._terrain.material.uniforms.uFog) {
+            g._terrain.material.uniforms.uFogNear.value = 1.0e8;
+            g._terrain.material.uniforms.uFogFar.value  = 1.0e9;
+        }
         return CMD_OK;
+    }
+
+// GL.CLOUDS flag [, coverage [, altitude [, thickness]]] — raymarched
+// volumetric clouds. A self-contained ShaderMaterial on a camera-following
+// box; no external libraries. flag 0 removes the layer. coverage is 0..1 sky
+// cover, altitude is the cloud band's base Y, thickness its height. The
+// raymarch cost scales with on-screen cloud area — step counts are kept
+// modest (see _cloudFragSrc); lower them if it costs too much speed.
+    cmdGL_CLOUDS(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 4);
+        if (g._clouds) {
+            t.scene.remove(g._clouds);
+            if (g._clouds.geometry) g._clouds.geometry.dispose();
+            if (g._clouds.material) g._clouds.material.dispose();
+            g._clouds = null;
+        }
+        if (!(p[0] > 0)) return CMD_OK;
+        const coverage  = ntok > 1 ? Math.max(0, Math.min(1, p[1])) : 0.5;
+        const altitude  = ntok > 2 ? p[2] : 50;
+        const thickness = ntok > 3 ? Math.max(2, p[3]) : 40;
+        const mat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime:     { value: 0 },
+                uCoverage: { value: coverage },
+                uBase:     { value: altitude },
+                uTop:      { value: altitude + thickness },
+                uSunDir:   { value: new THREE.Vector3(0.45, 0.78, 0.44).normalize() },
+                uCloudCol: { value: new THREE.Color(1.0, 1.0, 1.04) },
+                uShadeCol: { value: new THREE.Color(0.40, 0.45, 0.58) }
+            },
+            vertexShader:   this._cloudVertSrc(),
+            fragmentShader: this._cloudFragSrc(),
+            transparent: true,
+            depthWrite:  false,
+            depthTest:   true,
+            side:        THREE.BackSide
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(9000, thickness, 9000), mat);
+        mesh.position.set(0, altitude + thickness * 0.5, 0);
+        mesh.frustumCulled = false;
+        mesh.renderOrder   = 999;
+        t.scene.add(mesh);
+        g._clouds = mesh;
+        return CMD_OK;
+    }
+
+    _cloudVertSrc() {
+        return `
+varying vec3 vWorld;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorld = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+    }
+
+    _cloudFragSrc() {
+        return `
+varying vec3 vWorld;
+uniform float uTime;
+uniform float uCoverage;
+uniform float uBase;
+uniform float uTop;
+uniform vec3  uSunDir;
+uniform vec3  uCloudCol;
+uniform vec3  uShadeCol;
+float hash(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float vnoise(vec3 x) {
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash(i+vec3(0.0,0.0,0.0)), hash(i+vec3(1.0,0.0,0.0)), f.x),
+                 mix(hash(i+vec3(0.0,1.0,0.0)), hash(i+vec3(1.0,1.0,0.0)), f.x), f.y),
+             mix(mix(hash(i+vec3(0.0,0.0,1.0)), hash(i+vec3(1.0,0.0,1.0)), f.x),
+                 mix(hash(i+vec3(0.0,1.0,1.0)), hash(i+vec3(1.0,1.0,1.0)), f.x), f.y), f.z);
+}
+float fbm(vec3 p) {
+  float v = 0.0;
+  float a = 0.55;
+  for (int i = 0; i < 3; i++) {
+    v += a * vnoise(p);
+    p = p * 2.03 + 9.1;
+    a *= 0.5;
+  }
+  return v;
+}
+float cloud(vec3 p) {
+  vec3 q = p * 0.012 + vec3(uTime * 0.015, uTime * 0.004, uTime * 0.01);
+  float n = fbm(q);
+  float d = n - (1.0 - uCoverage);
+  float h = clamp((p.y - uBase) / (uTop - uBase), 0.0, 1.0);
+  float fall = smoothstep(0.0, 0.18, h) * smoothstep(1.0, 0.55, h);
+  return clamp(d, 0.0, 1.0) * fall;
+}
+void main() {
+  vec3 ro = cameraPosition;
+  vec3 rd = normalize(vWorld - cameraPosition);
+  float t0;
+  float t1;
+  if (abs(rd.y) < 0.0001) {
+    if (ro.y < uBase || ro.y > uTop) discard;
+    t0 = 0.0;
+    t1 = 4000.0;
+  } else {
+    float ta = (uBase - ro.y) / rd.y;
+    float tb = (uTop - ro.y) / rd.y;
+    t0 = max(min(ta, tb), 0.0);
+    t1 = max(ta, tb);
+  }
+  if (t1 <= t0) discard;
+  t1 = min(t1, t0 + 12000.0);
+  const int STEPS = 40;
+  float dt = (t1 - t0) / float(STEPS);
+  float t = t0 + dt * hash(vWorld);
+  float trans = 1.0;
+  vec3 col = vec3(0.0);
+  for (int i = 0; i < STEPS; i++) {
+    vec3 pos = ro + rd * t;
+    float dens = cloud(pos);
+    if (dens > 0.01) {
+      float ls = 0.0;
+      vec3 lp = pos;
+      for (int j = 0; j < 4; j++) {
+        lp += uSunDir * 26.0;
+        ls += cloud(lp);
+      }
+      float light = exp(-ls * 1.4);
+      vec3 c = mix(uShadeCol, uCloudCol, light);
+      float od = dens * dt * 0.06 * (1.0 - smoothstep(3500.0, 13000.0, t));
+      float ab = 1.0 - exp(-od);
+      col += trans * ab * c;
+      trans *= 1.0 - ab;
+    }
+    if (trans < 0.03) break;
+    t += dt;
+  }
+  float alpha = 1.0 - trans;
+  if (alpha < 0.02) discard;
+  gl_FragColor = vec4(col, alpha);
+}`;
+    }
+
+// GL.SKY flag [, elevation [, azimuth [, turbidity [, cloudCover]]]] — Preetham
+// atmospheric sky dome + sun + procedural (screen-projected, non-volumetric)
+// clouds, via the vendored three.js Sky addon. flag 0 removes it. elevation /
+// azimuth place the sun in degrees; turbidity is haze (1-20); cloudCover 0..1.
+// Pairs with GL.CLOUDS — Sky gives the high painted backdrop, GL.CLOUDS the
+// near volumetric layer — for depth.
+    cmdGL_SKY(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 5);
+        if (g._sky) {
+            t.scene.remove(g._sky);
+            if (g._sky.material) g._sky.material.dispose();
+            if (g._sky.geometry) g._sky.geometry.dispose();
+            g._sky = null;
+        }
+        if (!(p[0] > 0)) return CMD_OK;
+        if (typeof THREE.Sky !== 'function') {
+            this.appendLine('GL.SKY: Sky addon not loaded', 1);
+            return CMD_OK;
+        }
+        // defaults match the official three.js webgl_shaders_sky example
+        const elevation = ntok > 1 ? p[1] : 2;
+        const azimuth   = ntok > 2 ? p[2] : 180;
+        const turbidity = ntok > 3 ? p[3] : 10;
+        const cover     = ntok > 4 ? Math.max(0, Math.min(1, p[4])) : 0.4;
+        const sky = new THREE.Sky();
+        sky.scale.setScalar(450000);
+        sky.frustumCulled = false;
+        const u = sky.material.uniforms;
+        u['turbidity'].value       = turbidity;
+        u['rayleigh'].value        = 3;
+        u['mieCoefficient'].value  = 0.005;
+        u['mieDirectionalG'].value = 0.7;
+        u['cloudCoverage'].value   = cover;
+        const phi   = (90 - elevation) * Math.PI / 180;
+        const theta = azimuth * Math.PI / 180;
+        u['sunPosition'].value.setFromSphericalCoords(1, phi, theta);
+        t.scene.add(sky);
+        g._sky = sky;
+        return CMD_OK;
+    }
+
+// GL.TERRAIN flag [, size [, segments [, height [, cx [, cz]]]]] — replaces a
+// flat floor with a static noise heightmap. Wireframe-hills look: a solid
+// surface shaded dark valleys -> blue peaks, with a barycentric triangle
+// wireframe. segments = grid resolution per side; height = peak height;
+// cx/cz = world centre. Adapted from the terrain.zip sample — de-scrolled,
+// CPU-baked heightmap, self-contained (no external libraries).
+    cmdGL_TERRAIN(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const ntok = String(param || '').split(',').length;
+        const p = this._glParseFloats(param, 8);
+        const disposeTerrain = () => {
+            if (!g._terrain) return;
+            t.scene.remove(g._terrain);
+            if (g._terrain.geometry) g._terrain.geometry.dispose();
+            if (g._terrain.material) g._terrain.material.dispose();
+            g._terrain = null;
+        };
+        if (!(p[0] > 0)) { disposeTerrain(); return CMD_OK; }
+        const size   = ntok > 1 ? p[1] : 2000;
+        const segs   = ntok > 2 ? Math.max(2, Math.min(240, Math.round(p[2]))) : 64;
+        const height = ntok > 3 ? p[3] : 30;
+        const hills  = ntok > 4 ? Math.max(1, p[4]) : 16;
+        const cx     = ntok > 5 ? p[5] : 0;
+        const cz     = ntok > 6 ? p[6] : 0;
+        const mode   = ntok > 7 ? (p[7] > 0 ? 1 : 0) : 1;   // 1 = grid, 0 = shaded
+        // identical geometry already built -> just flip grid/shaded mode, no rebuild
+        if (g._terrain && g._terrain._tparams && g._terrain.parent === t.scene) {
+            const tp = g._terrain._tparams;
+            if (tp[0] === size && tp[1] === segs && tp[2] === height &&
+                tp[3] === hills && tp[4] === cx && tp[5] === cz) {
+                g._terrain.material.uniforms.uGrid.value = mode;
+                return CMD_OK;
+            }
+        }
+        disposeTerrain();
+        // value-noise FBM heightmap
+        const frac = (v) => v - Math.floor(v);
+        const hash = (x, z) => frac(Math.sin(x * 127.1 + z * 311.7) * 43758.5453);
+        const vnoise = (x, z) => {
+            const xi = Math.floor(x), zi = Math.floor(z);
+            const xf = x - xi, zf = z - zi;
+            const u = xf * xf * (3 - 2 * xf), w = zf * zf * (3 - 2 * zf);
+            const a = hash(xi, zi),     b = hash(xi + 1, zi);
+            const c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+            return a + (b - a) * u + (c - a) * w + (a - b - c + d) * u * w;
+        };
+        const fbm = (x, z) => {
+            let v = 0, amp = 0.5, f = 1, norm = 0;
+            for (let i = 0; i < 5; i++) { v += amp * vnoise(x * f, z * f); norm += amp; f *= 2; amp *= 0.68; }
+            return v / norm;   // slower amp falloff -> rougher, less-smoothed hills
+        };
+        const freq = hills / size;
+        const heightAt = (x, z) => {
+            let n = fbm(x * freq, z * freq);
+            n = n < 0 ? 0 : (n > 1 ? 1 : n);
+            return Math.pow(n, 1.3) * height;       // gentle valley flatten, rolling hills
+        };
+        // precompute the (segs+1)^2 height grid
+        const half = size * 0.5, step = size / segs;
+        const hg = [];
+        for (let iz = 0; iz <= segs; iz++) {
+            const row = [];
+            for (let ix = 0; ix <= segs; ix++) row.push(heightAt(-half + ix * step, -half + iz * step));
+            hg.push(row);
+        }
+        // non-indexed grid; each triangle vertex carries a barycentric centre
+        const pos = [], cen = [];
+        for (let iz = 0; iz < segs; iz++) {
+            for (let ix = 0; ix < segs; ix++) {
+                const x0 = -half + ix * step, x1 = x0 + step;
+                const z0 = -half + iz * step, z1 = z0 + step;
+                const y00 = hg[iz][ix],         y10 = hg[iz][ix + 1];
+                const y11 = hg[iz + 1][ix + 1], y01 = hg[iz + 1][ix];
+                pos.push(x0, y00, z0,  x1, y10, z0,  x1, y11, z1);
+                pos.push(x0, y00, z0,  x1, y11, z1,  x0, y01, z1);
+                cen.push(1,0,0, 0,1,0, 0,0,1,  1,0,0, 0,1,0, 0,0,1);
+            }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('center',   new THREE.Float32BufferAttribute(cen, 3));
+        // distance fog — match the scene fog (GL.FOG) so terrain fades into it
+        const fg = g.fog;
+        const fogColor = fg ? new THREE.Color(fg.r / 255, fg.g / 255, fg.b / 255)
+                            : new THREE.Color(0.62, 0.66, 0.74);
+        const mat = new THREE.ShaderMaterial({
+            uniforms: {
+                uLow:  { value: new THREE.Color(0.016, 0.024, 0.063) },
+                uHigh: { value: new THREE.Color(0.10, 0.32, 0.78) },
+                uWire: { value: new THREE.Color(0.35, 0.62, 1.0) },
+                uMaxH: { value: Math.max(1, height) },
+                uGrid:    { value: mode },
+                uFog:     { value: fogColor },
+                uFogNear: { value: fg ? fg.near : 300 },
+                uFogFar:  { value: fg ? fg.far  : 1600 }
+            },
+            vertexShader:   this._terrainVertSrc(),
+            fragmentShader: this._terrainFragSrc(),
+            side: THREE.DoubleSide,
+            extensions: { derivatives: true }
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(cx, 0, cz);
+        mesh.frustumCulled = false;
+        mesh._tparams = [size, segs, height, hills, cx, cz];
+        t.scene.add(mesh);
+        g._terrain = mesh;
+        return CMD_OK;
+    }
+
+    _terrainVertSrc() {
+        return `
+attribute vec3 center;
+varying vec3 vCenter;
+varying float vH;
+varying float vDist;
+void main() {
+  vCenter = center;
+  vH = position.y;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vDist = -mv.z;
+  gl_Position = projectionMatrix * mv;
+}`;
+    }
+
+    _terrainFragSrc() {
+        return `
+varying vec3 vCenter;
+varying float vH;
+varying float vDist;
+uniform vec3 uLow;
+uniform vec3 uHigh;
+uniform vec3 uWire;
+uniform float uMaxH;
+uniform vec3 uFog;
+uniform float uFogNear;
+uniform float uFogFar;
+uniform float uGrid;
+float edgeFactor() {
+  vec3 d = fwidth(vCenter);
+  vec3 a3 = smoothstep(vec3(0.0), d * 1.3, vCenter);
+  return min(min(a3.x, a3.y), a3.z);
+}
+void main() {
+  float h = clamp(vH / uMaxH, 0.0, 1.0);
+  vec3 base = mix(uLow, uHigh, h);
+  float e = edgeFactor();
+  vec3 col = mix(base, mix(uWire, base, e), uGrid);
+  col = mix(col, uFog, smoothstep(uFogNear, uFogFar, vDist));
+  gl_FragColor = vec4(col, 1.0);
+}`;
     }
 
 // GL.SPHERE id, radius, widthSegs, heightSegs — create a sphere mesh
@@ -1717,12 +2143,34 @@ class GL3DDriver {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
-        // Resolve the url argument: "literal" string or a string variable.
-        let url = this.trim(String(param || ''));
-        if (url.startsWith('"') && url.endsWith('"')) url = url.slice(1, -1);
-        else url = String(this.lookup_(ASS_STRING, url.toUpperCase()) || url);
-        url = url.trim();
+        // Arguments:  url$ [, rotX, rotY, rotZ]
+        // url$ is a "literal" or a string variable. The optional rotations are a
+        // one-time startup orientation (degrees) baked into the model node, so a
+        // craft authored facing any direction sits correct in the clean rig.
+        let raw = this.trim(String(param || ''));
+        let url, rest = '';
+        if (raw.charAt(0) === '"') {
+            const close = raw.indexOf('"', 1);
+            if (close < 0) return CMD_ESYNTAX;
+            url = raw.slice(1, close);
+            rest = raw.slice(close + 1);
+        } else {
+            const ci = raw.indexOf(',');
+            if (ci >= 0) { url = raw.slice(0, ci); rest = raw.slice(ci); }
+            else url = raw;
+            url = String(this.lookup_(ASS_STRING, this.trim(url).toUpperCase()) || url);
+        }
+        url = this.trim(url);
         if (!url) return CMD_ESYNTAX;
+        let corrX = 0, corrY = 0, corrZ = 0;
+        rest = this.trim(rest);
+        if (rest.charAt(0) === ',') rest = this.trim(rest.slice(1));
+        if (rest) {
+            const rp = rest.split(',');
+            if (rp[0] != null && this.trim(rp[0]) !== '') corrX = Number(this.evalCalc(this.trim(rp[0]), ASS_NUMBER)) || 0;
+            if (rp[1] != null && this.trim(rp[1]) !== '') corrY = Number(this.evalCalc(this.trim(rp[1]), ASS_NUMBER)) || 0;
+            if (rp[2] != null && this.trim(rp[2]) !== '') corrZ = Number(this.evalCalc(this.trim(rp[2]), ASS_NUMBER)) || 0;
+        }
         if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
             this.appendLine('GL.LOAD: GLTFLoader not available', 1);
             return CMD_OK;
@@ -1736,12 +2184,30 @@ class GL3DDriver {
                 try {
                     const model = gltf.scene;
                     model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-                    t.scene.add(model);
+                    // Two-node rig: inner model node + outer pivot Group.
+                    //  - The model node carries a one-time startup rotation
+                    //    (the optional GL.LOAD rot args) — its "own" rotation,
+                    //    correcting whatever orientation the GLB was authored in.
+                    //  - The pivot is re-centred on the *corrected* model's
+                    //    bounding box, so the pivot origin is the geometric
+                    //    centre. GL.ROTATE / GL.SCALE drive the pivot only — a
+                    //    clean control frame, identical for any model swapped in.
+                    model.position.set(0, 0, 0);
+                    model.rotation.set(corrX * Math.PI / 180,
+                                       corrY * Math.PI / 180,
+                                       corrZ * Math.PI / 180);
+                    model.updateMatrixWorld(true);
+                    const box = new THREE.Box3().setFromObject(model);
+                    const ctr = box.getCenter(new THREE.Vector3());
+                    model.position.set(-ctr.x, -ctr.y, -ctr.z);
+                    const pivot = new THREE.Group();
+                    pivot.add(model);
+                    t.scene.add(pivot);
                     const id = g.nextId++;
                     const fm = { id, verts: [], faces: [], colour: [255, 255, 255],
                         shine: 30, alpha: 1.0, emissive: [0, 0, 0],
                         tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1,
-                        _threeObjects: [model], _builtMode: g.mode, _isSphere: true, _isLoaded: true };
+                        _threeObjects: [pivot], _builtMode: g.mode, _isSphere: true, _isLoaded: true };
                     if (gltf.animations && gltf.animations.length > 0) {
                         fm._animations = gltf.animations;
                         fm._mixer = new THREE.AnimationMixer(model);

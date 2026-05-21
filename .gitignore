@@ -1,5 +1,8 @@
 .DS_Store
 
+# Reference asset package — not project source
+terrain.zip
+
 # Claude Code
 .claude/
 CLAUDE.md

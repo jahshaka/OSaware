@@ -2659,6 +2659,7 @@ class Interpreter {
         bus.on('gl.perspective',       (m) => gl.cmdGL_PERSPECTIVE(m.param));
         bus.on('gl.camera',            (m) => gl.cmdGL_CAMERA(m.param));
         bus.on('gl.lookat',            (m) => gl.cmdGL_LOOKAT(m.param));
+        bus.on('gl.cameraroll',        (m) => gl.cmdGL_CAMERAROLL(m.param));
         bus.on('gl.colour',            (m) => gl.cmdGL_COLOUR(m.param));
         bus.on('gl.wire',              ()  => gl.cmdGL_WIRE());
         bus.on('gl.solid',             ()  => gl.cmdGL_SOLID());
@@ -2698,6 +2699,9 @@ class Interpreter {
         bus.on('gl.envmap',            (m) => gl.cmdGL_ENVMAP(m.param));
         bus.on('gl.pointlight',        (m) => gl.cmdGL_POINTLIGHT(m.param));
         bus.on('gl.headlight',         (m) => gl.cmdGL_HEADLIGHT(m.param));
+        bus.on('gl.clouds',            (m) => gl.cmdGL_CLOUDS(m.param));
+        bus.on('gl.sky',               (m) => gl.cmdGL_SKY(m.param));
+        bus.on('gl.terrain',           (m) => gl.cmdGL_TERRAIN(m.param));
         bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
@@ -2790,6 +2794,7 @@ class Interpreter {
     cmdGL_PERSPECTIVE(p)       { return this.kernel.post({syscall:'gl.perspective',param:p}); }
     cmdGL_CAMERA(p)            { return this.kernel.post({syscall:'gl.camera',param:p}); }
     cmdGL_LOOKAT(p)            { return this.kernel.post({syscall:'gl.lookat',param:p}); }
+    cmdGL_CAMERAROLL(p)        { return this.kernel.post({syscall:'gl.cameraroll',param:p}); }
     cmdGL_COLOUR(p)            { return this.kernel.post({syscall:'gl.colour',param:p}); }
     cmdGL_WIRE()               { return this.kernel.post({syscall:'gl.wire'}); }
     cmdGL_SOLID()              { return this.kernel.post({syscall:'gl.solid'}); }
@@ -2829,6 +2834,9 @@ class Interpreter {
     cmdGL_ENVMAP(p)            { return this.kernel.post({syscall:'gl.envmap',param:p}); }
     cmdGL_POINTLIGHT(p)        { return this.kernel.post({syscall:'gl.pointlight',param:p}); }
     cmdGL_HEADLIGHT(p)         { return this.kernel.post({syscall:'gl.headlight',param:p}); }
+    cmdGL_CLOUDS(p)            { return this.kernel.post({syscall:'gl.clouds',param:p}); }
+    cmdGL_SKY(p)               { return this.kernel.post({syscall:'gl.sky',param:p}); }
+    cmdGL_TERRAIN(p)           { return this.kernel.post({syscall:'gl.terrain',param:p}); }
     cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
@@ -3501,6 +3509,7 @@ class Interpreter {
             ['GL.AA',          0,  (p) => this.cmdGL_AA(p),            1],
             ['GL.LOOKAT',      0,  (p) => this.cmdGL_LOOKAT(p),        1],
             ['GL.CAMERA',      0,  (p) => this.cmdGL_CAMERA(p),        1],
+            ['GL.CAMERAROLL',  0,  (p) => this.cmdGL_CAMERAROLL(p),    1],
             ['GL.COLOUR',      0,  (p) => this.cmdGL_COLOUR(p),        1],
             ['GL.VERTEX',      0,  (p) => this.cmdGL_VERTEX(p),        1],
             ['GL.LIGHT',       0,  (p) => this.cmdGL_LIGHT(p),         1],
@@ -3524,6 +3533,9 @@ class Interpreter {
             ['GL.TEXTURE',     0,  (p) => this.cmdGL_TEXTURE(p),       1],
             ['GL.POINTLIGHT',  0,  (p) => this.cmdGL_POINTLIGHT(p),    1],
             ['GL.HEADLIGHT',   0,  (p) => this.cmdGL_HEADLIGHT(p),     1],
+            ['GL.CLOUDS',      0,  (p) => this.cmdGL_CLOUDS(p),        1],
+            ['GL.SKY',         0,  (p) => this.cmdGL_SKY(p),           1],
+            ['GL.TERRAIN',     0,  (p) => this.cmdGL_TERRAIN(p),       1],
             ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
