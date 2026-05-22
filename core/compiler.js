@@ -282,6 +282,7 @@ class Compiler {
                         return (Object.keys(this._keysHeld || {}).length > 0) ? 1 : 0;
                     }
                     case 'GL.MESHID': return this._gl ? (this._gl.lastId || 0) : 0;
+                    case 'GL.PROBEY': return this._gl ? (this._gl._probeY || 0) : 0;
                 }
 
                 // Numeric built-in functions  e.g. ABS(…), RND(…) …
@@ -975,7 +976,7 @@ class Compiler {
         return _VOLATILE_SET || (_VOLATILE_SET = new Set([
             'TIMER','INKEY','SECONDS','RND','MOUSE','KEYDOWN',
             'COLLISION','WS.STATUS','CSRLIN','ERL','ERR',
-            'GL.MESHID','LINES','MAXLINE'
+            'GL.MESHID','GL.PROBEY','LINES','MAXLINE'
         ]));
     }
 
@@ -988,7 +989,7 @@ class Compiler {
             'UPTIME','SECONDS','TIMER','WS.STATUS','WINDOW.PID','DEVICE',
             'SCREENW','SCREENH','COLS','ROWS','WIDTH','HEIGHT',
             'LINES','MAXLINE','INKEY','RND','MOUSE','KEYDOWN','COLLISION',
-            'CSRLIN','ERL','ERR','GL.MESHID','PI','TRUE','FALSE'
+            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','PI','TRUE','FALSE'
         ]));
     }
 

@@ -2680,6 +2680,7 @@ class Interpreter {
         bus.on('gl.rotate',            (m) => gl.cmdGL_ROTATE(m.param));
         bus.on('gl.scale',             (m) => gl.cmdGL_SCALE(m.param));
         bus.on('gl.instance',          (m) => gl.cmdGL_INSTANCE(m.param));
+        bus.on('gl.insthide',          (m) => gl.cmdGL_INSTHIDE(m.param));
         bus.on('gl.draw',              (m) => gl.cmdGL_DRAW(m.param));
         bus.on('gl.drawall',           ()  => gl.cmdGL_DRAWALL());
         bus.on('gl.shine',             (m) => gl.cmdGL_SHINE(m.param));
@@ -2702,6 +2703,7 @@ class Interpreter {
         bus.on('gl.clouds',            (m) => gl.cmdGL_CLOUDS(m.param));
         bus.on('gl.sky',               (m) => gl.cmdGL_SKY(m.param));
         bus.on('gl.terrain',           (m) => gl.cmdGL_TERRAIN(m.param));
+        bus.on('gl.probe',             (m) => gl.cmdGL_PROBE(m.param));
         bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
@@ -2711,6 +2713,7 @@ class Interpreter {
         bus.on('gl.fogoff',            ()  => gl.cmdGL_FOGOFF());
         bus.on('gl.sphere',            (m) => gl.cmdGL_SPHERE(m.param));
         bus.on('gl.box',               (m) => gl.cmdGL_BOX(m.param));
+        bus.on('gl.cylinder',          (m) => gl.cmdGL_CYLINDER(m.param));
         bus.on('gl.polyhedron',        (m) => gl.cmdGL_POLYHEDRON(m.param));
         bus.on('gl.load',              (m) => gl.cmdGL_LOAD(m.param));
         bus.on('gl.chrome',            (m) => gl.cmdGL_CHROME(m.param));
@@ -2815,6 +2818,7 @@ class Interpreter {
     cmdGL_ROTATE(p)            { return this.kernel.post({syscall:'gl.rotate',param:p}); }
     cmdGL_SCALE(p)             { return this.kernel.post({syscall:'gl.scale',param:p}); }
     cmdGL_INSTANCE(p)          { return this.kernel.post({syscall:'gl.instance',param:p}); }
+    cmdGL_INSTHIDE(p)          { return this.kernel.post({syscall:'gl.insthide',param:p}); }
     cmdGL_DRAW(p)              { return this.kernel.post({syscall:'gl.draw',param:p}); }
     cmdGL_DRAWALL()            { return this.kernel.post({syscall:'gl.drawall'}); }
     cmdGL_SHINE(p)             { return this.kernel.post({syscall:'gl.shine',param:p}); }
@@ -2837,6 +2841,7 @@ class Interpreter {
     cmdGL_CLOUDS(p)            { return this.kernel.post({syscall:'gl.clouds',param:p}); }
     cmdGL_SKY(p)               { return this.kernel.post({syscall:'gl.sky',param:p}); }
     cmdGL_TERRAIN(p)           { return this.kernel.post({syscall:'gl.terrain',param:p}); }
+    cmdGL_PROBE(p)             { return this.kernel.post({syscall:'gl.probe',param:p}); }
     cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
@@ -2846,6 +2851,7 @@ class Interpreter {
     cmdGL_FOGOFF()             { return this.kernel.post({syscall:'gl.fogoff'}); }
     cmdGL_SPHERE(p)            { return this.kernel.post({syscall:'gl.sphere',param:p}); }
     cmdGL_BOX(p)               { return this.kernel.post({syscall:'gl.box',param:p}); }
+    cmdGL_CYLINDER(p)          { return this.kernel.post({syscall:'gl.cylinder',param:p}); }
     cmdGL_POLYHEDRON(p)        { return this.kernel.post({syscall:'gl.polyhedron',param:p}); }
     cmdGL_LOAD(p)              { return this.kernel.post({syscall:'gl.load',param:p}); }
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
@@ -3500,6 +3506,7 @@ class Interpreter {
             ['GL.PERSPECTIVE', 0,  (p) => this.cmdGL_PERSPECTIVE(p),   1],
             ['GL.TRANSLATE',   0,  (p) => this.cmdGL_TRANSLATE(p),     1],
             ['GL.INSTANCE',    0,  (p) => this.cmdGL_INSTANCE(p),      1],
+            ['GL.INSTHIDE',    0,  (p) => this.cmdGL_INSTHIDE(p),      1],
             ['GL.SOLIDWIRE',   0,  ()  => this.cmdGL_SOLIDWIRE()],
             ['GL.DRAWALL',     0,  ()  => this.cmdGL_DRAWALL()],
             ['GL.AMBIENT',     0,  (p) => this.cmdGL_AMBIENT(p),       1],
@@ -3536,6 +3543,7 @@ class Interpreter {
             ['GL.CLOUDS',      0,  (p) => this.cmdGL_CLOUDS(p),        1],
             ['GL.SKY',         0,  (p) => this.cmdGL_SKY(p),           1],
             ['GL.TERRAIN',     0,  (p) => this.cmdGL_TERRAIN(p),       1],
+            ['GL.PROBE',       0,  (p) => this.cmdGL_PROBE(p),         1],
             ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
@@ -3545,6 +3553,7 @@ class Interpreter {
             ['GL.FOGOFF',      0,  ()  => this.cmdGL_FOGOFF()],
             ['GL.SPHERE',      0,  (p) => this.cmdGL_SPHERE(p),        1],
             ['GL.BOX',         0,  (p) => this.cmdGL_BOX(p),           1],
+            ['GL.CYLINDER',    0,  (p) => this.cmdGL_CYLINDER(p),      1],
             ['GL.POLYHEDRON',  0,  (p) => this.cmdGL_POLYHEDRON(p),    1],
             ['GL.LOAD',        0,  (p) => this.cmdGL_LOAD(p),          1],
             ['GL.CHROME',      0,  (p) => this.cmdGL_CHROME(p),        1],

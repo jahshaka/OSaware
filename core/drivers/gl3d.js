@@ -644,15 +644,18 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+// GL.LIGHT dirX, dirY, dirZ [, intensity]
+// Aims the scene directional light. Optional 4th arg sets its intensity
+// directly; omitted, it defaults to (1 - ambient) * 0.7.
     cmdGL_LIGHT(param) {
-        const p = this._glParseFloats(param, 3);
+        const p = this._glParseFloats(param, 4);
         const g = this._glState();
         // Normalise light direction
         const len = Math.sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]) || 1;
         g.light = [p[0]/len, p[1]/len, p[2]/len];
         if (g.three) {
             g.three.dirLight.position.set(g.light[0], g.light[1], g.light[2]);
-            g.three.dirLight.intensity = (1 - g.ambient) * 0.7;
+            g.three.dirLight.intensity = (p[3] !== undefined) ? p[3] : (1 - g.ambient) * 0.7;
         }
         return CMD_OK;
     }
@@ -756,7 +759,9 @@ class GL3DDriver {
         const g = this._glState();
         const m = g.meshes[Math.round(p[0])];
         if (!m) return CMD_OK;
-        m.sx = p[1]||1; m.sy = p[2]||1; m.sz = p[3]||1;
+        m.sx = p[1] !== undefined ? p[1] : 1;
+        m.sy = p[2] !== undefined ? p[2] : 1;
+        m.sz = p[3] !== undefined ? p[3] : 1;
         if (m._threeObjects) {
             for (const obj of m._threeObjects) obj.scale.set(m.sx, m.sy, m.sz);
         }
@@ -1733,6 +1738,7 @@ void main() {
             if (g._terrain.geometry) g._terrain.geometry.dispose();
             if (g._terrain.material) g._terrain.material.dispose();
             g._terrain = null;
+            g._terrainH = null;
         };
         if (!(p[0] > 0)) { disposeTerrain(); return CMD_OK; }
         const size   = ntok > 1 ? p[1] : 2000;
@@ -1769,10 +1775,15 @@ void main() {
             return v / norm;   // slower amp falloff -> rougher, less-smoothed hills
         };
         const freq = hills / size;
+        // VALLEY threshold: noise below it collapses to a flat valley floor;
+        // noise above it rolls up into hills. Raising VALLEY -> more flat
+        // ground and wider paths winding between the mountains.
+        const VALLEY = 0.35;
         const heightAt = (x, z) => {
             let n = fbm(x * freq, z * freq);
+            n = (n - VALLEY) / (1 - VALLEY);
             n = n < 0 ? 0 : (n > 1 ? 1 : n);
-            return Math.pow(n, 1.3) * height;       // gentle valley flatten, rolling hills
+            return Math.pow(n, 2.2) * height;       // flat valleys, hills above VALLEY
         };
         // precompute the (segs+1)^2 height grid
         const half = size * 0.5, step = size / segs;
@@ -1824,6 +1835,8 @@ void main() {
         mesh._tparams = [size, segs, height, hills, cx, cz];
         t.scene.add(mesh);
         g._terrain = mesh;
+        // world-space height query for GL.PROBE / collision checks
+        g._terrainH = function (wx, wz) { return heightAt(wx - cx, wz - cz); };
         return CMD_OK;
     }
 
@@ -1868,6 +1881,17 @@ void main() {
   col = mix(col, uFog, smoothstep(uFogNear, uFogFar, vDist));
   gl_FragColor = vec4(col, 1.0);
 }`;
+    }
+
+// GL.PROBE x, z — sample the GL.TERRAIN surface height at world (x,z).
+// Read the result back with the GL.PROBEY numeric built-in. 0 if no terrain.
+    cmdGL_PROBE(param) {
+        const g = this._glState();
+        const parts = String(param || '').split(',');
+        const x = Number(this.evalCalc(this.trim(parts[0] || '0'), ASS_NUMBER)) || 0;
+        const z = Number(this.evalCalc(this.trim(parts[1] || '0'), ASS_NUMBER)) || 0;
+        g._probeY = g._terrainH ? g._terrainH(x, z) : 0;
+        return CMD_OK;
     }
 
 // GL.SPHERE id, radius, widthSegs, heightSegs — create a sphere mesh
@@ -1925,6 +1949,47 @@ void main() {
         const opacity  = g.alpha;
         const transparent = opacity < 1.0;
         const geo = new THREE.BoxGeometry(w, h, d);
+
+        const mat = (g.mode === 'wire')
+            ? new THREE.MeshBasicMaterial({ color, wireframe: true, transparent, opacity })
+            : new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide,
+                shininess: g.shine, transparent, opacity,
+                emissive: new THREE.Color(g.emissive[0]/255, g.emissive[1]/255, g.emissive[2]/255),
+                depthWrite: !transparent });
+
+        const mesh3 = new THREE.Mesh(geo, mat);
+        mesh3.castShadow    = false;
+        mesh3.receiveShadow = false;
+        t.scene.add(mesh3);
+
+        const id = g.nextId++;
+        const fakeMesh = { id, verts:[], faces:[], colour:[r,gv,b],
+            shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
+            tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
+            _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
+        g.meshes[id] = fakeMesh;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+// GL.CYLINDER radius, length, sides — create a cylinder mesh.
+// The long axis runs along local +Z (geometry pre-rotated), so the same
+// GL.ROTATE that aims the craft nose also aims the cylinder.
+    cmdGL_CYLINDER(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const p = this._glParseFloats(param, 3);
+        const radius = p[0] || 0.2;
+        const length = p[1] || 2;
+        const sides  = Math.round(p[2]) || 8;
+
+        const [r,gv,b] = g.colour;
+        const color    = new THREE.Color(r/255, gv/255, b/255);
+        const opacity  = g.alpha;
+        const transparent = opacity < 1.0;
+        const geo = new THREE.CylinderGeometry(radius, radius, length, sides);
+        geo.rotateX(Math.PI/2);
 
         const mat = (g.mode === 'wire')
             ? new THREE.MeshBasicMaterial({ color, wireframe: true, transparent, opacity })
@@ -2282,7 +2347,7 @@ void main() {
         return CMD_OK;
     }
 
-// GL.INSTANCE srcId, x, y, z, dirX, dirY, dirZ
+// GL.INSTANCE srcId, x, y, z, dirX, dirY, dirZ [, tiltXdeg, tiltZdeg]
 // Adds one GPU instance of mesh srcId at (x,y,z), with the template's local +X axis
 // mapped onto the vector (dirX,dirY,dirZ) — so a unit segment 0..1 along +X becomes
 // a segment of that length pointing that way. Local +Y stays world-vertical; local
@@ -2294,30 +2359,97 @@ void main() {
 // original from the scene — it becomes an invisible template whose geometry+material
 // every instance shares. Subsequent calls just write one matrix and bump the count;
 // the matrix buffer auto-doubles on overflow, so there's no hard segment cap.
+// A single-mesh template (primitive / GL.BEGIN mesh) takes the single-mesh
+// path. A GL.LOAD'd model (a multi-mesh GLB) takes the multi-part path: the
+// first call promotes it into one THREE.InstancedMesh per leaf mesh, captures
+// each leaf's in-model transform, and every instance then draws the whole
+// model rigidly. Scale a model source with GL.SCALE before the first call.
+// The optional tiltXdeg / tiltZdeg rotate each instance about its own local
+// X and Z axes (body frame) — e.g. to lay a model along a terrain slope.
     cmdGL_INSTANCE(param) {
         const g = this._glState();
-        const p = this._glParseFloats(param, 7);
+        const p = this._glParseFloats(param, 9);
         const m = g.meshes[Math.round(p[0])];
         if (!m) return CMD_OK;
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
+
+        // Shared scratch, allocated once. The orientation basis (local +X ->
+        // dir, +Y -> world up, +Z -> horizontal perpendicular) is built into
+        // t._instMat and used by both paths below.
+        if (!t._instMat) {
+            t._instMat   = new THREE.Matrix4();
+            t._instMat2  = new THREE.Matrix4();
+            t._instWorld = new THREE.Matrix4();
+            t._instX = new THREE.Vector3();
+            t._instY = new THREE.Vector3(0, 1, 0);
+            t._instZ = new THREE.Vector3(0, 0, 1);
+            t._instEul  = new THREE.Euler();
+            t._instTilt = new THREE.Matrix4();
+            t._instBase = new THREE.Matrix4();
+        }
+        let dx = p[4] || 0, dy = p[5] || 0, dz = p[6] || 0;
+        if (dx === 0 && dy === 0 && dz === 0) dx = 1;        // degenerate guard
+        t._instX.set(dx, dy, dz);
+        const hl = Math.hypot(dx, dz);
+        if (hl > 1e-6) t._instZ.set(-dz / hl, 0, dx / hl);   // unit horizontal perpendicular
+        else t._instZ.set(0, 0, 1);
+        t._instMat.makeBasis(t._instX, t._instY, t._instZ);
+        t._instMat.setPosition(p[1] || 0, p[2] || 0, p[3] || 0);
+
+        // --- multi-part path: a GL.LOAD'd model -> one InstancedMesh per leaf ---
+        if (m._isLoaded) {
+            if (!m._instLeaves) {
+                const root = m._threeObjects && m._threeObjects[0];
+                if (!root) return CMD_OK;
+                root.updateMatrixWorld(true);
+                const leaves = [];
+                root.traverse((c) => { if (c.isMesh && c.geometry) leaves.push(c); });
+                if (leaves.length === 0) return CMD_OK;
+                m._instLeaves = [];
+                for (const leaf of leaves) {
+                    const li = new THREE.InstancedMesh(leaf.geometry, leaf.material, 2048);
+                    li.count = 0;
+                    li.frustumCulled = false;
+                    li.castShadow = true;
+                    li.receiveShadow = true;
+                    t.scene.add(li);
+                    m._instLeaves.push({ inst: li, local: leaf.matrixWorld.clone() });
+                }
+                for (const obj of m._threeObjects) t.scene.remove(obj);
+                m._isTemplate = true;
+                m._instCount = 0;
+            }
+            // optional body-frame tilt: rotate about local X (p[7]) and local
+            // Z (p[8]), in degrees — lays an instanced model along a slope.
+            const D = Math.PI / 180;
+            t._instEul.set((p[7] || 0) * D, 0, (p[8] || 0) * D, 'XYZ');
+            t._instTilt.makeRotationFromEuler(t._instEul);
+            t._instBase.multiplyMatrices(t._instMat, t._instTilt);
+            const im = m._instCount;
+            for (const lr of m._instLeaves) {
+                if (im >= lr.inst.instanceMatrix.count) continue;
+                t._instWorld.multiplyMatrices(t._instBase, lr.local);
+                lr.inst.setMatrixAt(im, t._instWorld);
+                lr.inst.count = im + 1;
+                lr.inst.instanceMatrix.needsUpdate = true;
+            }
+            m._instCount = im + 1;
+            return CMD_OK;
+        }
+
+        // --- single-mesh path: ribbons / primitives (one shared InstancedMesh) ---
         if (!m._instanced) {
             if (!m._threeObjects || m._builtMode !== g.mode) this._glSyncMesh(m, g);
             const src = m._threeObjects && m._threeObjects[0];
             if (!src || !src.geometry || !src.material) return CMD_OK;
-            const inst = new THREE.InstancedMesh(src.geometry, src.material, 2048);
-            inst.count = 0;
-            inst.frustumCulled = false;
+            const inst0 = new THREE.InstancedMesh(src.geometry, src.material, 2048);
+            inst0.count = 0;
+            inst0.frustumCulled = false;
             for (const obj of m._threeObjects) t.scene.remove(obj);
             m._isTemplate = true;
-            t.scene.add(inst);
-            m._instanced = inst;
-            if (!t._instMat) {
-                t._instMat = new THREE.Matrix4();
-                t._instX   = new THREE.Vector3();
-                t._instY   = new THREE.Vector3(0, 1, 0);   // local Y -> world up
-                t._instZ   = new THREE.Vector3(0, 0, 1);   // local Z -> path's horizontal perpendicular (set per call)
-            }
+            t.scene.add(inst0);
+            m._instanced = inst0;
         }
         let inst = m._instanced;
         const i = inst.count;
@@ -2325,7 +2457,7 @@ void main() {
         if (i >= inst.instanceMatrix.count) {
             const inst2 = new THREE.InstancedMesh(inst.geometry, inst.material, inst.instanceMatrix.count * 2);
             inst2.frustumCulled = false;
-            for (let k = 0; k < i; k++) { inst.getMatrixAt(k, t._instMat); inst2.setMatrixAt(k, t._instMat); }
+            for (let k = 0; k < i; k++) { inst.getMatrixAt(k, t._instMat2); inst2.setMatrixAt(k, t._instMat2); }
             inst2.count = i;
             inst2.instanceMatrix.needsUpdate = true;
             t.scene.remove(inst);
@@ -2334,17 +2466,34 @@ void main() {
             m._instanced = inst2;
             inst = inst2;
         }
-        let dx = p[4] || 0, dy = p[5] || 0, dz = p[6] || 0;
-        if (dx === 0 && dy === 0 && dz === 0) dx = 1;        // degenerate guard
-        t._instX.set(dx, dy, dz);
-        const hl = Math.hypot(dx, dz);
-        if (hl > 1e-6) t._instZ.set(-dz / hl, 0, dx / hl);   // unit horizontal perpendicular of (dx,_,dz)
-        else t._instZ.set(0, 0, 1);
-        t._instMat.makeBasis(t._instX, t._instY, t._instZ);
-        t._instMat.setPosition(p[1] || 0, p[2] || 0, p[3] || 0);
         inst.setMatrixAt(i, t._instMat);
         inst.count = i + 1;
         inst.instanceMatrix.needsUpdate = true;
+        return CMD_OK;
+    }
+
+// GL.INSTHIDE srcId, index — collapse one instance of an instanced mesh to
+// nothing (a zero matrix) — used to "remove" a hit enemy. Works on both the
+// multi-part (GL.LOAD'd model) and single-mesh instance paths.
+    cmdGL_INSTHIDE(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 2);
+        const m = g.meshes[Math.round(p[0])];
+        if (!m) return CMD_OK;
+        const idx = Math.round(p[1]);
+        if (idx < 0) return CMD_OK;
+        const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+        if (m._instLeaves) {
+            for (const lr of m._instLeaves) {
+                if (idx < lr.inst.count) {
+                    lr.inst.setMatrixAt(idx, zero);
+                    lr.inst.instanceMatrix.needsUpdate = true;
+                }
+            }
+        } else if (m._instanced && idx < m._instanced.count) {
+            m._instanced.setMatrixAt(idx, zero);
+            m._instanced.instanceMatrix.needsUpdate = true;
+        }
         return CMD_OK;
     }
 
