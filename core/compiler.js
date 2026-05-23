@@ -283,6 +283,12 @@ class Compiler {
                     }
                     case 'GL.MESHID': return this._gl ? (this._gl.lastId || 0) : 0;
                     case 'GL.PROBEY': return this._gl ? (this._gl._probeY || 0) : 0;
+                    case 'GL.SCANY':  return this._gl ? (this._gl._scanY || 0) : 0;
+                    case 'GL.SCAND':  return this._gl ? (this._gl._scanD || 0) : 0;
+                    case 'GL.SCANS':  return this._gl ? (this._gl._scanS || 0) : 0;
+                    case 'GL.HITID':  return this._gl ? (this._gl._obstHitID !== undefined ? this._gl._obstHitID : -1) : -1;
+                    case 'GL.HITDIST': return this._gl ? (this._gl._obstHitDist || 0) : 0;
+                    case 'GL.OBSTID': return this._gl ? (this._gl._lastObstId !== undefined ? this._gl._lastObstId : -1) : -1;
                 }
 
                 // Numeric built-in functions  e.g. ABS(…), RND(…) …
@@ -976,7 +982,7 @@ class Compiler {
         return _VOLATILE_SET || (_VOLATILE_SET = new Set([
             'TIMER','INKEY','SECONDS','RND','MOUSE','KEYDOWN',
             'COLLISION','WS.STATUS','CSRLIN','ERL','ERR',
-            'GL.MESHID','GL.PROBEY','LINES','MAXLINE'
+            'GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID','LINES','MAXLINE'
         ]));
     }
 
@@ -989,7 +995,7 @@ class Compiler {
             'UPTIME','SECONDS','TIMER','WS.STATUS','WINDOW.PID','DEVICE',
             'SCREENW','SCREENH','COLS','ROWS','WIDTH','HEIGHT',
             'LINES','MAXLINE','INKEY','RND','MOUSE','KEYDOWN','COLLISION',
-            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','PI','TRUE','FALSE'
+            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID','PI','TRUE','FALSE'
         ]));
     }
 

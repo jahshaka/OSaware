@@ -1297,13 +1297,16 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-// GL.POINTLIGHT x,y,z [,r,g,b [,intensity [,distance]]] — add a point light
+// GL.POINTLIGHT x,y,z [,r,g,b [,intensity [,distance [,shadow]]]] — add a point light
+    // shadow: 1 (default) enables shadow map (~512x512, costs a texture unit);
+    //         0 skips the shadow map, so many lights can coexist without
+    //         exhausting MAX_TEXTURE_IMAGE_UNITS. Use 0 for ambient marker lights.
     cmdGL_POINTLIGHT(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
         const ntok = String(param || '').split(',').length;
-        const p = this._glParseFloats(param, 8);
+        const p = this._glParseFloats(param, 9);
         const cc = v => Math.max(0, Math.min(255, v)) / 255;
         // r/g/b default to white only when actually omitted (0 is a valid channel)
         const r  = ntok > 3 ? cc(p[3]) : 1;
@@ -1311,12 +1314,15 @@ class GL3DDriver {
         const b  = ntok > 5 ? cc(p[5]) : 1;
         const intensity = ntok > 6 ? p[6] : 2;
         const distance  = ntok > 7 ? p[7] : 10; // 0=infinite
+        const shadowOn  = ntok > 8 ? (p[8] !== 0) : true;
         const light = new THREE.PointLight(new THREE.Color(r, gv, b), intensity, distance, 1);
         light.position.set(p[0]||0, p[1]||0, p[2]||0);
-        light.castShadow            = true;
-        light.shadow.mapSize.width  = 512;
-        light.shadow.mapSize.height = 512;
-        light.shadow.bias           = -0.002;
+        light.castShadow            = shadowOn;
+        if (shadowOn) {
+            light.shadow.mapSize.width  = 512;
+            light.shadow.mapSize.height = 512;
+            light.shadow.bias           = -0.002;
+        }
         t.scene.add(light);
         if (!g.pointLights) g.pointLights = [];
         g.pointLights.push(light);
@@ -1891,6 +1897,67 @@ void main() {
         const x = Number(this.evalCalc(this.trim(parts[0] || '0'), ASS_NUMBER)) || 0;
         const z = Number(this.evalCalc(this.trim(parts[1] || '0'), ASS_NUMBER)) || 0;
         g._probeY = g._terrainH ? g._terrainH(x, z) : 0;
+        return CMD_OK;
+    }
+
+// GL.SCANFWD x, z, yaw, fromDist, toDist — scan terrain along a forward ray.
+// Samples 6 points evenly spaced over [fromDist, toDist] in radians yaw direction.
+// Sets GL.SCANY (peak height), GL.SCAND (distance to peak), GL.SCANS (avg height).
+    cmdGL_SCANFWD(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 5);
+        const x = p[0] || 0, z = p[1] || 0, yaw = p[2] || 0;
+        const fromD = p[3] || 0, toD = (p[4] !== undefined ? p[4] : 100);
+        const samples = 6;
+        const cy = Math.cos(yaw), sy = Math.sin(yaw);
+        let peakY = -Infinity, peakD = fromD, sumY = 0;
+        for (let i = 0; i < samples; i++) {
+            const d = fromD + (toD - fromD) * (i / (samples - 1));
+            const h = g._terrainH ? g._terrainH(x + cy * d, z + sy * d) : 0;
+            sumY += h;
+            if (h > peakY) { peakY = h; peakD = d; }
+        }
+        g._scanY = peakY === -Infinity ? 0 : peakY;
+        g._scanD = peakD;
+        g._scanS = sumY / samples;
+        return CMD_OK;
+    }
+
+// GL.OBSTACLE x, y, z, radius — register a sphere obstacle for OBSTACLEHIT queries.
+// Index of the new obstacle is available via GL.OBSTID.
+    cmdGL_OBSTACLE(param) {
+        const g = this._glState();
+        if (!g._obstacles) g._obstacles = [];
+        const p = this._glParseFloats(param, 4);
+        g._obstacles.push({ x: p[0]||0, y: p[1]||0, z: p[2]||0, r: p[3]||1 });
+        g._lastObstId = g._obstacles.length - 1;
+        return CMD_OK;
+    }
+
+// GL.OBSTACLEHIT x, z, radius — find nearest obstacle whose XZ circle overlaps query.
+// Sets GL.HITID (index, -1 if none) and GL.HITDIST (centre-to-centre distance).
+    cmdGL_OBSTACLEHIT(param) {
+        const g = this._glState();
+        if (!g._obstacles) g._obstacles = [];
+        const p = this._glParseFloats(param, 3);
+        const x = p[0]||0, z = p[1]||0, r = p[2]||0;
+        let bestId = -1, bestDist = Infinity;
+        for (let i = 0; i < g._obstacles.length; i++) {
+            const o = g._obstacles[i];
+            const dx = o.x - x, dz = o.z - z;
+            const d = Math.sqrt(dx*dx + dz*dz);
+            if (d < r + o.r && d < bestDist) { bestDist = d; bestId = i; }
+        }
+        g._obstHitID = bestId;
+        g._obstHitDist = bestId >= 0 ? bestDist : 0;
+        return CMD_OK;
+    }
+
+// GL.OBSTACLECLEAR — remove all registered obstacles.
+    cmdGL_OBSTACLECLEAR() {
+        const g = this._glState();
+        g._obstacles = [];
+        g._lastObstId = -1;
         return CMD_OK;
     }
 

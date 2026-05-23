@@ -2704,6 +2704,10 @@ class Interpreter {
         bus.on('gl.sky',               (m) => gl.cmdGL_SKY(m.param));
         bus.on('gl.terrain',           (m) => gl.cmdGL_TERRAIN(m.param));
         bus.on('gl.probe',             (m) => gl.cmdGL_PROBE(m.param));
+        bus.on('gl.scanfwd',           (m) => gl.cmdGL_SCANFWD(m.param));
+        bus.on('gl.obstacle',          (m) => gl.cmdGL_OBSTACLE(m.param));
+        bus.on('gl.obstaclehit',       (m) => gl.cmdGL_OBSTACLEHIT(m.param));
+        bus.on('gl.obstacleclear',     ()  => gl.cmdGL_OBSTACLECLEAR());
         bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
@@ -2842,6 +2846,10 @@ class Interpreter {
     cmdGL_SKY(p)               { return this.kernel.post({syscall:'gl.sky',param:p}); }
     cmdGL_TERRAIN(p)           { return this.kernel.post({syscall:'gl.terrain',param:p}); }
     cmdGL_PROBE(p)             { return this.kernel.post({syscall:'gl.probe',param:p}); }
+    cmdGL_SCANFWD(p)           { return this.kernel.post({syscall:'gl.scanfwd',param:p}); }
+    cmdGL_OBSTACLE(p)          { return this.kernel.post({syscall:'gl.obstacle',param:p}); }
+    cmdGL_OBSTACLEHIT(p)       { return this.kernel.post({syscall:'gl.obstaclehit',param:p}); }
+    cmdGL_OBSTACLECLEAR()      { return this.kernel.post({syscall:'gl.obstacleclear'}); }
     cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
@@ -3544,6 +3552,10 @@ class Interpreter {
             ['GL.SKY',         0,  (p) => this.cmdGL_SKY(p),           1],
             ['GL.TERRAIN',     0,  (p) => this.cmdGL_TERRAIN(p),       1],
             ['GL.PROBE',       0,  (p) => this.cmdGL_PROBE(p),         1],
+            ['GL.SCANFWD',     0,  (p) => this.cmdGL_SCANFWD(p),       1],
+            ['GL.OBSTACLE',    0,  (p) => this.cmdGL_OBSTACLE(p),      1],
+            ['GL.OBSTACLEHIT', 0,  (p) => this.cmdGL_OBSTACLEHIT(p),   1],
+            ['GL.OBSTACLECLEAR', 0, ()  => this.cmdGL_OBSTACLECLEAR()],
             ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
