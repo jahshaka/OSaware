@@ -535,17 +535,33 @@ class Interpreter {
         const upper = line.toUpperCase();
         const thenPos = upper.indexOf('THEN');
 
+        // Are we already inside a skipping block-IF branch? If so, the
+        // outer skipping path passed IF through purely so we could track
+        // nesting depth — don't evaluate the condition or run the body.
+        const outerSkipping = this._if_stack.length > 0 &&
+                              this._if_stack[this._if_stack.length - 1].skipping;
+
         // Block IF: nothing (or only whitespace/comment) after THEN
         // → push a frame and let subsequent lines be skipped/executed.
         if (thenPos > 0) {
             const afterThen = line.substring(thenPos + 4).trim();
             if (afterThen === '' || afterThen.toUpperCase().startsWith('REM')) {
-                const condition = line.substring(0, thenPos).trim();
-                const result    = this.checkCondition(condition);
-                this._if_stack.push({ done: result, skipping: !result });
+                if (outerSkipping) {
+                    // Inside a skipping branch — push a "dead" frame that
+                    // never executes its body (regardless of inner cond),
+                    // so nested ELSEIF/ELSE/END IF still pair correctly.
+                    this._if_stack.push({ done: true, skipping: true });
+                } else {
+                    const condition = line.substring(0, thenPos).trim();
+                    const result    = this.checkCondition(condition);
+                    this._if_stack.push({ done: result, skipping: !result });
+                }
                 return CMD_OK;
             }
         }
+
+        // Single-line IF inside a skipping block — don't execute either branch.
+        if (outerSkipping) return CMD_OK;
 
         // Single-line IF — original behaviour.
         const parts = this.extractIfParts(line);

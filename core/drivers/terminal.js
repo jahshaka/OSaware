@@ -672,14 +672,14 @@ class TerminalDriver {
         }
 
 
-        // Tab — insert 4 spaces at cursor position (indent).
+        // Tab — insert 3 spaces at cursor position (indent).
         // Prevent default so the browser doesn't move focus off the terminal.
         if (kc === 9) {
-            const spaces = '    ';
+            const spaces = '   ';
             this.line_typed = this.line_typed.slice(0, this.cursor_pos) +
                               spaces +
                               this.line_typed.slice(this.cursor_pos);
-            this.cursor_pos += 4;
+            this.cursor_pos += 3;
             this._redrawInputLine();
             return false;
         }
