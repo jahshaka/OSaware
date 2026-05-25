@@ -2729,6 +2729,7 @@ class Interpreter {
         bus.on('gl.translate',         (m) => gl.cmdGL_TRANSLATE(m.param));
         bus.on('gl.rotate',            (m) => gl.cmdGL_ROTATE(m.param));
         bus.on('gl.scale',             (m) => gl.cmdGL_SCALE(m.param));
+        bus.on('gl.parent',            (m) => gl.cmdGL_PARENT(m.param));
         bus.on('gl.instance',          (m) => gl.cmdGL_INSTANCE(m.param));
         bus.on('gl.insthide',          (m) => gl.cmdGL_INSTHIDE(m.param));
         bus.on('gl.draw',              (m) => gl.cmdGL_DRAW(m.param));
@@ -2872,6 +2873,7 @@ class Interpreter {
     cmdGL_TRANSLATE(p)         { return this.kernel.post({syscall:'gl.translate',param:p}); }
     cmdGL_ROTATE(p)            { return this.kernel.post({syscall:'gl.rotate',param:p}); }
     cmdGL_SCALE(p)             { return this.kernel.post({syscall:'gl.scale',param:p}); }
+    cmdGL_PARENT(p)            { return this.kernel.post({syscall:'gl.parent',param:p}); }
     cmdGL_INSTANCE(p)          { return this.kernel.post({syscall:'gl.instance',param:p}); }
     cmdGL_INSTHIDE(p)          { return this.kernel.post({syscall:'gl.insthide',param:p}); }
     cmdGL_DRAW(p)              { return this.kernel.post({syscall:'gl.draw',param:p}); }
@@ -3565,6 +3567,7 @@ class Interpreter {
             // GL 3D rendering system — longest names first
             ['GL.PERSPECTIVE', 0,  (p) => this.cmdGL_PERSPECTIVE(p),   1],
             ['GL.TRANSLATE',   0,  (p) => this.cmdGL_TRANSLATE(p),     1],
+            ['GL.PARENT',      0,  (p) => this.cmdGL_PARENT(p),        1],
             ['GL.INSTANCE',    0,  (p) => this.cmdGL_INSTANCE(p),      1],
             ['GL.INSTHIDE',    0,  (p) => this.cmdGL_INSTHIDE(p),      1],
             ['GL.SOLIDWIRE',   0,  ()  => this.cmdGL_SOLIDWIRE()],

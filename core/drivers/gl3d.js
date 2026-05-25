@@ -735,6 +735,32 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+// GL.PARENT child_id, parent_id — re-parent child mesh under parent mesh's
+// scene graph node. After parenting, GL.TRANSLATE / GL.ROTATE / GL.SCALE
+// on the child operate in the parent's LOCAL frame — child follows the
+// parent's position + rotation automatically. parent_id = 0 detaches the
+// child back to the world scene root (no parent). Uses parent.attach()
+// which preserves the child's current world transform during the swap.
+    cmdGL_PARENT(param) {
+        const p = this._glParseFloats(param, 2);
+        const g = this._glState();
+        const t = g.three;
+        if (!t) return CMD_OK;
+        const child = g.meshes[Math.round(p[0])];
+        if (!child || !child._threeObjects || !child._threeObjects.length) return CMD_OK;
+        const childObj = child._threeObjects[0];
+        const parentId = Math.round(p[1]);
+        let target = t.scene;
+        if (parentId > 0) {
+            const parent = g.meshes[parentId];
+            if (parent && parent._threeObjects && parent._threeObjects.length) {
+                target = parent._threeObjects[0];
+            }
+        }
+        target.attach(childObj);
+        return CMD_OK;
+    }
+
     cmdGL_ROTATE(param) {
         const p = this._glParseFloats(param, 4);
         const g = this._glState();
