@@ -838,12 +838,27 @@ class Interpreter {
     cmdSHARED(param) {
         if (!param || this._sub_stack.length === 0) return CMD_OK;
         const frame = this._sub_stack[this._sub_stack.length - 1];
+        // SHARED has two valid uses, both supported via this hybrid lookup:
+        //   1) Inter-SUB state passing: caller writes a var, then CALLs the
+        //      callee which SHAREs the same var to read it. The var lives in
+        //      the caller's local scope, not the root globals.
+        //   2) Access to root-level globals from any nesting depth, without
+        //      every intermediate SUB needing to re-declare them.
+        // Strategy: check the immediate caller's savedGlobals first (case 1),
+        // fall back to the root frame's savedGlobals (case 2). For the
+        // outermost SUB, callerGlobals === rootGlobals so the two coincide.
+        const callerGlobals = frame.savedGlobals;
+        const rootGlobals   = this._sub_stack[0].savedGlobals;
+        const pickScalar = (vn, key) => {
+            if (callerGlobals[key] !== undefined) return callerGlobals[key];
+            if (rootGlobals !== callerGlobals && rootGlobals[key] !== undefined) return rootGlobals[key];
+            return undefined;
+        };
         for (const v of param.split(',')) {
             // Variable names are case-sensitive (Model B) — preserve user case.
             const vn = this.trim(v).replace(/\(\s*\)$/, '');  // strip () from array names
             frame.shared.add(vn);
-            // Bring the main-program value into scope now
-            const mainVal = frame.savedGlobals[vn];
+            const mainVal = pickScalar(vn, vn);
             if (mainVal !== undefined) {
                 if (typeof mainVal === 'string') {
                     this.variables_strings.set(vn, mainVal);
@@ -851,12 +866,11 @@ class Interpreter {
                     this.variables_numbers.set(vn, mainVal);
                 }
             }
-            // Also restore numeric arrays (stored with ARR: prefix)
-            const arrVal = frame.savedGlobals['ARR:' + vn];
+            const arrVal = pickScalar(vn, 'ARR:' + vn);
             if (arrVal !== undefined) {
                 this.variables_arr_numbers.set(vn, arrVal);
             }
-            const arrStrVal = frame.savedGlobals['ARR$:' + vn];
+            const arrStrVal = pickScalar(vn, 'ARR$:' + vn);
             if (arrStrVal !== undefined) {
                 this.variables_arr_strings.set(vn, arrStrVal);
             }
@@ -1077,11 +1091,31 @@ class Interpreter {
         this.variables_arr_numbers = savedArrNums;
         this.variables_arr_strings = savedArrStrs;
 
-        // Apply SHARED changes back to global scope
+        // Apply SHARED changes back to the immediate caller's scope (current
+        // variables_numbers after restore above).
         for (const [k, v] of sharedNums)    this.variables_numbers.set(k, v);
         for (const [k, v] of sharedStrs)    this.variables_strings.set(k, v);
         for (const [k, v] of sharedArrNums) this.variables_arr_numbers.set(k, v);
         for (const [k, v] of sharedArrStrs) this.variables_arr_strings.set(k, v);
+
+        // ALSO propagate SHARED writes to the ROOT savedNums (the bottommost
+        // frame's snapshot, which becomes variables_numbers when the outermost
+        // SUB eventually returns). This way nested SUBs can SHARED a global var
+        // without every intermediate SUB needing to declare it too — the write
+        // travels straight back to root scope on the next outermost return.
+        if (this._sub_stack.length > 0) {
+            const rootFrame = this._sub_stack[0];
+            for (const [k, v] of sharedNums)    rootFrame.savedNums.set(k, v);
+            for (const [k, v] of sharedStrs)    rootFrame.savedStrs.set(k, v);
+            for (const [k, v] of sharedArrNums) rootFrame.savedArrNums.set(k, v);
+            for (const [k, v] of sharedArrStrs) rootFrame.savedArrStrs.set(k, v);
+            // Also keep rootFrame.savedGlobals in sync so deeper-nested calls
+            // started AFTER this return see the updated value via cmdSHARED.
+            for (const [k, v] of sharedNums)    rootFrame.savedGlobals[k]        = v;
+            for (const [k, v] of sharedStrs)    rootFrame.savedGlobals[k]        = v;
+            for (const [k, v] of sharedArrNums) rootFrame.savedGlobals['ARR:'+k] = v;
+            for (const [k, v] of sharedArrStrs) rootFrame.savedGlobals['ARR$:'+k]= v;
+        }
 
         // Apply pass-by-reference updates
         for (const [callerVar, upd] of Object.entries(refUpdates)) {
