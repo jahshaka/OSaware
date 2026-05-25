@@ -2708,6 +2708,7 @@ class Interpreter {
         bus.on('gl.obstacle',          (m) => gl.cmdGL_OBSTACLE(m.param));
         bus.on('gl.obstaclehit',       (m) => gl.cmdGL_OBSTACLEHIT(m.param));
         bus.on('gl.obstacleclear',     ()  => gl.cmdGL_OBSTACLECLEAR());
+        bus.on('aig.navigate',         (m) => gl.cmdAIG_NAVIGATE(m.param));
         bus.on('gl.rectlight',         (m) => gl.cmdGL_RECTLIGHT(m.param));
         bus.on('gl.lightsoff',         ()  => gl.cmdGL_LIGHTSOFF());
         bus.on('gl.hide',              (m) => gl.cmdGL_HIDE(m.param));
@@ -2850,6 +2851,7 @@ class Interpreter {
     cmdGL_OBSTACLE(p)          { return this.kernel.post({syscall:'gl.obstacle',param:p}); }
     cmdGL_OBSTACLEHIT(p)       { return this.kernel.post({syscall:'gl.obstaclehit',param:p}); }
     cmdGL_OBSTACLECLEAR()      { return this.kernel.post({syscall:'gl.obstacleclear'}); }
+    cmdAIG_NAVIGATE(p)         { return this.kernel.post({syscall:'aig.navigate',param:p}); }
     cmdGL_RECTLIGHT(p)         { return this.kernel.post({syscall:'gl.rectlight',param:p}); }
     cmdGL_LIGHTSOFF()          { return this.kernel.post({syscall:'gl.lightsoff'}); }
     cmdGL_HIDE(p)              { return this.kernel.post({syscall:'gl.hide',param:p}); }
@@ -3556,6 +3558,7 @@ class Interpreter {
             ['GL.OBSTACLE',    0,  (p) => this.cmdGL_OBSTACLE(p),      1],
             ['GL.OBSTACLEHIT', 0,  (p) => this.cmdGL_OBSTACLEHIT(p),   1],
             ['GL.OBSTACLECLEAR', 0, ()  => this.cmdGL_OBSTACLECLEAR()],
+            ['AIG_NAVIGATE',   0,  (p) => this.cmdAIG_NAVIGATE(p),     1],
             ['GL.RECTLIGHT',   0,  (p) => this.cmdGL_RECTLIGHT(p),     1],
             ['GL.LIGHTSOFF',   0,  ()  => this.cmdGL_LIGHTSOFF()],
             ['GL.HIDE',        0,  (p) => this.cmdGL_HIDE(p),        1],
@@ -4450,6 +4453,7 @@ class Interpreter {
                         const _savedIfLine = this.if_line;
                         this.if_line = '';
                         this._inBatch = true;  // prevent cmdGOTO from calling tick()
+                        const _stackLenBefore = this._sub_stack.length;
                         const ifNewLine = this.interpret(_savedIfLine);
                         this._inBatch = false;
                         if      (ifNewLine === -2 || ifNewLine === CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
@@ -4464,9 +4468,18 @@ class Interpreter {
                                     break;
                                 }
                             }
-                            // Store remainder on the call frame so _returnFromSub
-                            // queues it AFTER the SUB completes, not before it runs.
-                            if (_rest && this._sub_stack.length > 0) {
+                            // Override returnLine only when CALL pushed a NEW frame.
+                            // For GOTO inside a SUB body, leaving the SUB's own frame
+                            // alone preserves its correct return-to-caller line.
+                            // The legacy `_rest && stack>0` branch is kept for
+                            // backward-compat with programs that relied on the
+                            // colon-tail-after-GOTO queueing (rare but existed).
+                            const _callPushedFrame = this._sub_stack.length > _stackLenBefore;
+                            if (_callPushedFrame) {
+                                const _f = this._sub_stack[this._sub_stack.length - 1];
+                                _f._afterReturn = _rest;
+                                _f.returnLine = _ifSourceLine + 1;
+                            } else if (_rest && this._sub_stack.length > 0) {
                                 const _f = this._sub_stack[this._sub_stack.length - 1];
                                 _f._afterReturn = _rest;
                                 _f.returnLine = _ifSourceLine + 1;

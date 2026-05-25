@@ -1961,6 +1961,66 @@ void main() {
         return CMD_OK;
     }
 
+// AIG_NAVIGATE y, cruiseAGL, nearH, h1, h2, hW, hL, hR
+//   Pure-math steering helper. The game scans the world itself (via
+//   GL.PROBE / GL.SCANFWD) and passes the results in; this just turns them
+//   into yaw/pitch/boost suggestions + a severity score. No internal
+//   probing - works for any game that can answer "how tall is the
+//   terrain/obstacle at point X".
+// Inputs:
+//   y         = player Y (altitude / row / whatever the vertical axis is)
+//   cruiseAGL = desired height above the ground beneath the player
+//   nearH     = terrain height under the player           (1x GL.PROBE)
+//   h1        = peak height in the NEAR forward band      (1x GL.SCANFWD)
+//   h2        = peak height in the FAR forward band       (1x GL.SCANFWD)
+//   hW        = peak height in the WAYPOINT direction     (1x GL.SCANFWD)
+//   hL        = terrain at lateral-LEFT probe point       (1x GL.PROBE)
+//   hR        = terrain at lateral-RIGHT probe point      (1x GL.PROBE)
+// Outputs (read via builtins):
+//   AIG_YAW   = yaw bias (rad) - add to current heading to dodge lateral terrain
+//   AIG_PITCH = vertical bias (rad) - climb/dive toward (nearH + cruiseAGL)
+//   AIG_BOOST = speed multiplier (~0.8..2.0) - slow in danger, fast in clear
+//   AIG_SEV   = severity 0..1 (worst of near + far forward danger)
+// (AIG_ prefix avoids collision with AIKEY/AISYSTEM/... LLM commands.)
+    cmdAIG_NAVIGATE(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 8);
+        const y         = p[0] || 0;
+        const cruiseAGL = p[1] || 35;
+        const nearH     = p[2] || 0;
+        const h1        = p[3] || 0;
+        const h2        = p[4] || 0;
+        const hW        = p[5] || 0;
+        const hL        = p[6] || 0;
+        const hR        = p[7] || 0;
+
+        const sevF = Math.max(0, h2 - y + 10) / 100;
+        const sevN = Math.max(0, h1 - y +  5) /  60;
+        const sev  = Math.min(1.0, Math.max(sevF, sevN));
+        const climbOver = (h1 > y + 40 || h2 > y + 30 || hW > y + 30);
+
+        const diff = hR - hL, abd = Math.abs(diff);
+        const dead = Math.max(0, abd - 5);
+        const amp  = 1 + abd * 0.008;
+        const rawBias = -Math.sign(diff + 0.001) * dead * 0.012 * amp;
+        const yawBias = Math.max(-0.8, Math.min(0.8, rawBias));
+
+        const tgtY = nearH + cruiseAGL;
+        let suggPitch = (tgtY - y) * 0.025 * (1 + Math.abs(tgtY - y) * 0.01);
+        if (climbOver || sev > 0.5) suggPitch = 0.7;
+
+        let suggBoost = 1.0;
+        if (climbOver || sev > 0.5)        suggBoost = 2.0;
+        else if (sev < 0.1)                suggBoost = 1.8;
+        else if (sev >= 0.1 && sev < 0.5)  suggBoost = 0.8;
+
+        g._navYaw   = yawBias;
+        g._navPitch = suggPitch;
+        g._navBoost = suggBoost;
+        g._navSev   = sev;
+        return CMD_OK;
+    }
+
 // GL.SPHERE id, radius, widthSegs, heightSegs — create a sphere mesh
     cmdGL_SPHERE(param) {
         const g = this._glState();

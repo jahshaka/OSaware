@@ -289,6 +289,10 @@ class Compiler {
                     case 'GL.HITID':  return this._gl ? (this._gl._obstHitID !== undefined ? this._gl._obstHitID : -1) : -1;
                     case 'GL.HITDIST': return this._gl ? (this._gl._obstHitDist || 0) : 0;
                     case 'GL.OBSTID': return this._gl ? (this._gl._lastObstId !== undefined ? this._gl._lastObstId : -1) : -1;
+                    case 'AIG_YAW':   return this._gl ? (this._gl._navYaw   || 0) : 0;
+                    case 'AIG_PITCH': return this._gl ? (this._gl._navPitch || 0) : 0;
+                    case 'AIG_BOOST': return this._gl ? (this._gl._navBoost || 0) : 0;
+                    case 'AIG_SEV':   return this._gl ? (this._gl._navSev   || 0) : 0;
                 }
 
                 // Numeric built-in functions  e.g. ABS(…), RND(…) …
@@ -982,7 +986,8 @@ class Compiler {
         return _VOLATILE_SET || (_VOLATILE_SET = new Set([
             'TIMER','INKEY','SECONDS','RND','MOUSE','KEYDOWN',
             'COLLISION','WS.STATUS','CSRLIN','ERL','ERR',
-            'GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID','LINES','MAXLINE'
+            'GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
+            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','LINES','MAXLINE'
         ]));
     }
 
@@ -995,7 +1000,8 @@ class Compiler {
             'UPTIME','SECONDS','TIMER','WS.STATUS','WINDOW.PID','DEVICE',
             'SCREENW','SCREENH','COLS','ROWS','WIDTH','HEIGHT',
             'LINES','MAXLINE','INKEY','RND','MOUSE','KEYDOWN','COLLISION',
-            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID','PI','TRUE','FALSE'
+            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
+            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','PI','TRUE','FALSE'
         ]));
     }
 
@@ -1300,15 +1306,35 @@ class Compiler {
     // -----------------------------------------------------------------------
     _parseCondTree(expr) {
         expr = expr.trim();
+
+        // Strip outer matching parentheses: "(A OR B)" -> "A OR B".
+        // Repeat for nested wraps like "((A))" -> "A".
+        while (expr.length >= 2 && expr[0] === '(' && expr[expr.length-1] === ')') {
+            let depth = 0, outerMatched = true;
+            for (let i = 0; i < expr.length; i++) {
+                if (expr[i] === '(') depth++;
+                else if (expr[i] === ')') depth--;
+                if (depth === 0 && i < expr.length - 1) {
+                    outerMatched = false; break;  // closing came before end
+                }
+            }
+            if (!outerMatched || depth !== 0) break;
+            expr = expr.substring(1, expr.length - 1).trim();
+        }
         const upper = expr.toUpperCase();
 
-        // Find AND/OR at word boundaries (OR has lower precedence)
+        // Find AND/OR at word boundaries (OR has lower precedence) at paren depth 0.
+        // Without depth tracking, "A AND (B OR C)" would split at the inner OR,
+        // producing left="A AND (B" with unmatched parens — silently wrong.
         const findKw = (s, kw) => {
             const u = s.toUpperCase();
-            let inQ = false;
+            let inQ = false, depth = 0;
             for (let i = 0; i <= u.length - kw.length; i++) {
                 if (u[i] === '"') { inQ = !inQ; continue; }
                 if (inQ) continue;
+                if (u[i] === '(') { depth++; continue; }
+                if (u[i] === ')') { depth--; continue; }
+                if (depth > 0) continue;
                 if (u.substring(i, i+kw.length) === kw) {
                     const before = i===0 || /\W/.test(u[i-1]);
                     const after  = (i+kw.length>=u.length) || /\W/.test(u[i+kw.length]);
@@ -1333,11 +1359,15 @@ class Compiler {
             return {t:'not', c:this._parseCondTree(expr.substring(4).trim())};
         }
 
-        // Find comparison operator
+        // Find comparison operator at paren depth 0 (avoid matching < / > inside
+        // function-call arg lists like MIN(A, B>C) if such usage ever appears).
         const findOp = (s, op) => {
-            let inQ=false;
+            let inQ=false, depth=0;
             for (let i=0; i<=s.length-op.length; i++) {
                 if (s[i]==='"'){inQ=!inQ;continue;} if(inQ)continue;
+                if (s[i]==='(') { depth++; continue; }
+                if (s[i]===')') { depth--; continue; }
+                if (depth > 0) continue;
                 if (s.substring(i,i+op.length)===op) return i;
             }
             return -1;

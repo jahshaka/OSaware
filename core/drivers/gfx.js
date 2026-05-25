@@ -242,12 +242,18 @@ class GfxDriver {
             const y = Math.round(Number(params[1]));
             if (x >= 0 && y >= 0 && x < g.W && y < g.H) {
                 const col = params.length > 2 ? Number(params[2]) : this.colour_fg_cursor;
+                const i = (y * g.W + x) * 4;
+                // col === -1 → clear pixel (transparent — lets GL/canvas show through)
+                if (col === -1) {
+                    g.buf[i] = 0; g.buf[i+1] = 0; g.buf[i+2] = 0; g.buf[i+3] = 0;
+                    g.dirty = true;
+                    return CMD_OK;
+                }
                 // Use pre-built colour table if available, else fall back
                 const ct = this._gfxColourTable;
                 const rgba = (ct && col >= 0 && col < ct.length)
                     ? ct[col]
                     : this._gfxColour(col);
-                const i = (y * g.W + x) * 4;
                 g.buf[i] = rgba[0]; g.buf[i+1] = rgba[1]; g.buf[i+2] = rgba[2]; g.buf[i+3] = 255;
                 g.dirty = true;
                 return CMD_OK;
