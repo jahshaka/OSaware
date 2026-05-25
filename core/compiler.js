@@ -1176,6 +1176,33 @@ class Compiler {
     // parseAssign  –  evaluate and store a LET-style assignment.
     // -----------------------------------------------------------------------
     parseAssign(lineToParse) {
+        // Compound assignment: +=, -=, *=, /= at top level (outside parens/quotes).
+        // Scans left-to-right; first match wins. Allows whitespace between op and '='.
+        // Rewrites "LHS op= RHS" as "LHS = (LHS) op (RHS)" and recurses through normal path.
+        {
+            let depth = 0, inQ = false;
+            for (let i = 0; i < lineToParse.length - 1; i++) {
+                const c = lineToParse[i];
+                if (c === '"') { inQ = !inQ; continue; }
+                if (inQ) continue;
+                if (c === '(') { depth++; continue; }
+                if (c === ')') { depth--; continue; }
+                if (depth !== 0) continue;
+                if (c === '=') break; // plain '=' encountered first, not compound
+                if (c === '+' || c === '-' || c === '*' || c === '/') {
+                    let j = i + 1;
+                    while (j < lineToParse.length && lineToParse[j] === ' ') j++;
+                    if (j < lineToParse.length && lineToParse[j] === '=') {
+                        const lhs = lineToParse.substring(0, i).trim();
+                        const rhs = lineToParse.substring(j + 1).trim();
+                        if (lhs.length > 0 && rhs.length > 0) {
+                            return this.parseAssign(lhs + '=(' + lhs + ')' + c + '(' + rhs + ')');
+                        }
+                    }
+                }
+            }
+        }
+
         const eqPos = lineToParse.indexOf('=');
         if (eqPos <= 0) return null;
 

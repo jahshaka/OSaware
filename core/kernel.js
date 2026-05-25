@@ -3829,6 +3829,13 @@ class Interpreter {
     interpret(a, noOutput) {
         if (!a) return -1;
 
+        // Tolerate leading whitespace after line numbers so source can be visually indented.
+        // (Line numbers are stripped before interpret() runs; what arrives here may begin with spaces.)
+        if (a.charCodeAt(0) === 32 || a.charCodeAt(0) === 9) {
+            a = a.replace(/^[ \t]+/, '');
+            if (!a) return -1;
+        }
+
         // Skip SUB/FUNCTION bodies during normal execution.
         {
             const _ut = a.trim().toUpperCase();
@@ -4256,6 +4263,15 @@ class Interpreter {
             // Store metadata now, lazily parse expression tree on first execution
             else if (t.indexOf('=') > 0) {
                 const eqPos = t.indexOf('=');
+                // Skip compound assignments (+=, -=, *=, /=). The '=' here is part of
+                // the compound op, not a plain assignment — splitting on it would create
+                // a bogus varName ending in +/-/*//, breaking the assignment entirely.
+                // Let these fall through to interpret()/parseAssign which handles them.
+                const chBeforeEq = eqPos > 0 ? t[eqPos - 1] : '';
+                if (chBeforeEq === '+' || chBeforeEq === '-' ||
+                    chBeforeEq === '*' || chBeforeEq === '/') {
+                    continue;
+                }
                 // Variables are case-sensitive — preserve original case in the cache.
                 const varName = t.substring(0, eqPos).trim();
                 const rhs = t.substring(eqPos + 1).trim();
