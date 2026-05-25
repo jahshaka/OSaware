@@ -1841,8 +1841,15 @@ void main() {
         mesh._tparams = [size, segs, height, hills, cx, cz];
         t.scene.add(mesh);
         g._terrain = mesh;
-        // world-space height query for GL.PROBE / collision checks
-        g._terrainH = function (wx, wz) { return heightAt(wx - cx, wz - cz); };
+        // world-space height query for GL.PROBE / collision checks. Outside
+        // the mesh's [-half, +half] bounds we return 0 (the valley floor)
+        // so AI navigation sees flat ground past the map edge instead of
+        // diving into noisy off-mesh "hills" that aren't actually rendered.
+        g._terrainH = function (wx, wz) {
+            const x = wx - cx, z = wz - cz;
+            if (x < -half || x > half || z < -half || z > half) return 0;
+            return heightAt(x, z);
+        };
         return CMD_OK;
     }
 
