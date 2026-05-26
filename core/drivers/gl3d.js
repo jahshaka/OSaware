@@ -761,6 +761,279 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+// GL.PARTICLES preset$, count [, youngR, youngG, youngB, oldR, oldG, oldB]
+// Create a GPU-driven particle system using THREE.Points + ShaderMaterial.
+// Registers like any other mesh — GL.PARENT / GL.TRANSLATE / GL.SCALE work.
+// Presets v0.1: "fire" (real shader), "smoke"/"plasma"/"sparks" (stubs that
+// currently delegate to the fire shader with their own colour defaults —
+// swap in their own shader later by replacing the builder in g._particlePresets).
+//
+// Per-particle attributes (just `seed` — random 0..1 per particle); everything
+// else is computed in the vertex shader from uniforms + the global `time`
+// uniform which is advanced by GL.PARTICLES_TICK.
+    cmdGL_PARTICLES(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const parts = String(param || '').split(',').map(s => s.trim());
+        const preset = (parts[0] || '').replace(/^['"]|['"]$/g, '').toLowerCase();
+        const count = Math.min(2000, Math.max(1, Math.round(parseFloat(parts[1] || '150'))));
+        // Optional colour overrides (each preset has its own defaults if these are absent)
+        const colorArgs = (parts.length >= 8) ? {
+            youngR: parseFloat(parts[2]), youngG: parseFloat(parts[3]), youngB: parseFloat(parts[4]),
+            oldR:   parseFloat(parts[5]), oldG:   parseFloat(parts[6]), oldB:   parseFloat(parts[7]),
+        } : null;
+        // Optional trail (cone height) + spread (cone base radius) as args 9 & 10
+        const trailArg  = (parts.length >= 9  && !isNaN(parseFloat(parts[8])))  ? parseFloat(parts[8])  : undefined;
+        const spreadArg = (parts.length >= 10 && !isNaN(parseFloat(parts[9])))  ? parseFloat(parts[9])  : undefined;
+        if (!g._particlePresets) {
+            g._particlePresets = {
+                'fire':   (opts) => this._buildFireParticles(opts, { youngR:  60, youngG: 140, youngB: 255, oldR:  10, oldG:  20, oldB:  80, trail: 3.0, spread: 0.5 }),
+                'smoke':  (opts) => this._buildFireParticles(opts, { youngR: 200, youngG: 200, youngB: 210, oldR:  50, oldG:  50, oldB:  60, trail: 2.5, spread: 0.6 }),
+                'plasma': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG:  80, youngB: 220, oldR: 120, oldG:   0, oldB: 180, trail: 2.5, spread: 0.4 }),
+                'sparks': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG: 255, youngB: 180, oldR: 255, oldG:  80, oldB:   0, trail: 2.0, spread: 0.3 }),
+            };
+        }
+        const builder = g._particlePresets[preset];
+        if (!builder) {
+            if (typeof console !== 'undefined') console.warn('GL.PARTICLES: unknown preset "' + preset + '"');
+            return CMD_OK;
+        }
+        const built = builder({ count, color: colorArgs, trail: trailArg, spread: spreadArg });
+        const { points, uniforms } = built;
+        t.scene.add(points);
+        if (!g._particleSystems) g._particleSystems = [];
+        g._particleSystems.push({ uniforms });
+        if (g._particleTime === undefined) g._particleTime = 0;
+        // Register as a mesh so GL.PARENT / GL.TRANSLATE / GL.SCALE work
+        const id = g.nextId++;
+        const [cr,cg,cb] = g.colour;
+        const fm = { id, verts: [], faces: [], colour: [cr,cg,cb],
+            shine: g.shine, alpha: g.alpha, emissive: [...g.emissive],
+            tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1,
+            _threeObjects: [points], _builtMode: g.mode, _isParticles: true,
+            _particleUniforms: uniforms };
+        g.meshes[id] = fm;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+// Internal: build the fire-preset particle system. `defaults` carries
+// the colour-RGB defaults to use when the caller didn't pass overrides.
+// Each particle gets a unique BASE position in a CONE shape (radius
+// = spread, height = trail) — so the population occupies 3D volume
+// from the start. The vertex shader "blooms" each particle from y=0
+// up to its base.y over its life cycle, yomotsu-style. Multiplier
+// uniforms (trailMul, spreadMul) let GL.PARTICLES_PARAM tune the size
+// at runtime without rebuilding the geometry.
+    _buildFireParticles(opts, defaults) {
+        const { count } = opts;
+        const c = opts.color || defaults;
+        const yR = c.youngR, yG = c.youngG, yB = c.youngB;
+        const oR = c.oldR,   oG = c.oldG,   oB = c.oldB;
+        const trail  = (opts.trail  !== undefined) ? opts.trail  : defaults.trail;
+        const spread = (opts.spread !== undefined) ? opts.spread : defaults.spread;
+        const geom = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const seeds     = new Float32Array(count);
+        const halfH = trail * 0.5;
+        // Yomotsu-style cone distribution: uniform area in the base circle,
+        // height tapers from full at centre to 0 at the rim — narrow at top.
+        for (let i = 0; i < count; i++) {
+            const r     = Math.sqrt(Math.random()) * spread;
+            const angle = Math.random() * 2 * Math.PI;
+            positions[3*i + 0] = Math.cos(angle) * r;
+            positions[3*i + 1] = (spread - r) / spread * halfH + halfH;
+            positions[3*i + 2] = Math.sin(angle) * r;
+            seeds[i] = Math.random();
+        }
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geom.setAttribute('seed',     new THREE.BufferAttribute(seeds, 1));
+        const uniforms = {
+            time:        { value: 0 },
+            lifetime:    { value: 1.20 },
+            trailMul:    { value: 1.0 },
+            spreadMul:   { value: 1.0 },
+            pointSize:   { value: 9.5 },
+            opacity:     { value: 0.10 },
+            intensity:   { value: 1.0 },
+            seedOffset:  { value: 13.0 },
+            sizeFalloff: { value: 1.2 },
+            emitCutoff:  { value: 1e9 },
+            colorYoung:  { value: new THREE.Color(yR/255, yG/255, yB/255) },
+            colorOld:    { value: new THREE.Color(oR/255, oG/255, oB/255) },
+        };
+        const mat = new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader: [
+                'uniform float time;',
+                'uniform float lifetime;',
+                'uniform float trailMul;',
+                'uniform float spreadMul;',
+                'uniform float pointSize;',
+                'uniform float seedOffset;',
+                'uniform float sizeFalloff;',
+                'uniform float emitCutoff;',
+                'uniform float intensity;',
+                'attribute float seed;',
+                'varying float vLife;',
+                'varying float vBorn;',
+                'void main() {',
+                '    float adjusted = time + seed * seedOffset;',
+                '    float cycleNum = floor(adjusted / lifetime);',
+                '    float spawnTime = cycleNum * lifetime - seed * seedOffset;',
+                '    float phase = (adjusted - cycleNum * lifetime) / lifetime;',
+                '    vLife = phase;',
+                '    vBorn = step(spawnTime, emitCutoff);',
+                '    // Bloom: position.xz fixed (cone XZ ring); position.y scales',
+                '    // with phase from 0 (collapsed at base) to full (top of cone).',
+                '    // intensity also stretches the cone Y so low thrust = short flame.',
+                '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * phase, position.z * spreadMul);',
+                '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
+                '    gl_Position = projectionMatrix * mv;',
+                '    float shrink = pow(max(0.0, 1.0 - phase), sizeFalloff);',
+                '    gl_PointSize = pointSize * shrink * (300.0 / max(-mv.z, 1.0));',
+                '}'
+            ].join('\n'),
+            fragmentShader: [
+                'uniform vec3 colorYoung;',
+                'uniform vec3 colorOld;',
+                'uniform float opacity;',
+                'uniform float intensity;',
+                'varying float vLife;',
+                'varying float vBorn;',
+                'void main() {',
+                '    if (vBorn < 0.5) discard;',
+                '    vec2 c = gl_PointCoord - 0.5;',
+                '    float r = length(c);',
+                '    if (r > 0.5) discard;',
+                '    float falloff = smoothstep(0.5, 0.0, r);',
+                '    vec3 color = mix(colorYoung, colorOld, vLife);',
+                '    float alpha = falloff * (1.0 - vLife) * opacity * intensity;',
+                '    gl_FragColor = vec4(color, alpha);',
+                '}'
+            ].join('\n'),
+            blending: THREE.AdditiveBlending,
+            depthTest: true,
+            depthWrite: false,
+            transparent: true,
+        });
+        const points = new THREE.Points(geom, mat);
+        points.frustumCulled = false;  // bounding sphere of zero'd positions is misleading
+        return { points, uniforms };
+    }
+
+// GL.PARTICLES_TICK [dt]
+// Advance the global `time` uniform for every particle system. Optional dt
+// in seconds: 0 = pause, omit = real wall-clock since previous tick call,
+// custom value = slow-mo / fast-forward override.
+    cmdGL_PARTICLES_TICK(param) {
+        const g = this._glState();
+        if (!g._particleSystems || !g._particleSystems.length) return CMD_OK;
+        // Check param directly — DON'T use _glParseFloats here because that
+        // helper returns [0] for empty input (filled with zeros), which would
+        // make us think the user passed an explicit dt=0 and skip the clock.
+        const trimmed = (param == null) ? '' : String(param).trim();
+        let dt;
+        if (trimmed.length > 0) {
+            const userDt = parseFloat(trimmed);
+            if (!isNaN(userDt)) {
+                dt = userDt;
+            }
+        }
+        if (dt === undefined) {
+            const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+            if (g._particleLastTick === undefined) {
+                dt = 0;
+            } else {
+                dt = now - g._particleLastTick;
+                if (dt > 0.25) dt = 0.25; // clamp on stall to avoid huge time jumps
+            }
+            g._particleLastTick = now;
+        }
+        if (g._particleTime === undefined) g._particleTime = 0;
+        g._particleTime += dt;
+        for (const sys of g._particleSystems) {
+            sys.uniforms.time.value = g._particleTime;
+        }
+        return CMD_OK;
+    }
+
+// GL.PARTICLES_PARAM id, name$, value
+// Tune any particle system uniform by name. Names: "lifetime", "trail",
+// "spread", "rise", "pointSize", "opacity", "seedOffset", "sizeFalloff".
+// Use GL.PARTICLES_COLOR for the colour pair (vec3 isn't a single scalar).
+    cmdGL_PARTICLES_PARAM(param) {
+        const g = this._glState();
+        const parts = String(param || '').split(',').map(s => s.trim());
+        if (parts.length < 3) return CMD_OK;
+        // CRITICAL: use evalCalc (not parseFloat) so BASIC variables resolve.
+        // parseFloat("EXHID") returns NaN; evalCalc looks the variable up.
+        const id    = Math.round(Number(this.evalCalc(parts[0], ASS_NUMBER)));
+        const name  = parts[1].replace(/^['"]|['"]$/g, '');
+        const value = Number(this.evalCalc(parts[2], ASS_NUMBER));
+        const m = g.meshes[id];
+        if (!m || !m._particleUniforms) return CMD_OK;
+        if (m._particleUniforms[name]) {
+            m._particleUniforms[name].value = value;
+        }
+        return CMD_OK;
+    }
+
+// GL.PARTICLES_EMIT id, flag — start (flag>0) or stop (flag=0) particle
+// emission. Stop = freeze the system's emitCutoff uniform at the current
+// time; particles whose next spawn time would fall after that cutoff are
+// discarded in the vertex/fragment shader. In-flight particles continue
+// their current lifetime cycle normally — flame "dies out" over ~lifetime
+// seconds instead of vanishing instantly. Start = release the cutoff (set
+// to a huge value) so all cycles resume spawning normally.
+    cmdGL_PARTICLES_EMIT(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param || '', 2);
+        const id = Math.round(p[0]);
+        const m = g.meshes[id];
+        if (!m || !m._particleUniforms || !m._particleUniforms.emitCutoff) return CMD_OK;
+        const flag = (p[1] > 0);
+        if (flag) {
+            m._particleUniforms.emitCutoff.value = 1e9;
+        } else {
+            // Hard-hide: cutoff lower than ANY possible spawnTime (which can
+            // go as negative as -seedOffset). All particles fail the step()
+            // gate and are discarded immediately — engines snap off rather
+            // than waiting ~lifetime+seedOffset seconds for the population
+            // to cycle through.
+            m._particleUniforms.emitCutoff.value = -1e9;
+        }
+        return CMD_OK;
+    }
+
+// GL.PARTICLES_VISIBLE id, flag — explicitly show (flag>0) or hide (flag=0)
+// a particle system. Bypasses the scale-to-zero hide trick (which can leave
+// shader-driven Points clustered at the parent's view-space origin).
+    cmdGL_PARTICLES_VISIBLE(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param || '', 2);
+        const id = Math.round(p[0]);
+        const m = g.meshes[id];
+        if (!m || !m._threeObjects) return CMD_OK;
+        const flag = (p[1] > 0);
+        for (const obj of m._threeObjects) obj.visible = flag;
+        return CMD_OK;
+    }
+
+// GL.PARTICLES_COLOR id, youngR, youngG, youngB, oldR, oldG, oldB
+// Recolour an existing particle system. RGB on 0..255 to match GL.COLOUR.
+    cmdGL_PARTICLES_COLOR(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param || '', 7);
+        const id = Math.round(p[0]);
+        const m = g.meshes[id];
+        if (!m || !m._particleUniforms) return CMD_OK;
+        m._particleUniforms.colorYoung.value.setRGB(p[1]/255, p[2]/255, p[3]/255);
+        m._particleUniforms.colorOld.value.setRGB(p[4]/255, p[5]/255, p[6]/255);
+        return CMD_OK;
+    }
+
     cmdGL_ROTATE(param) {
         const p = this._glParseFloats(param, 4);
         const g = this._glState();
@@ -788,8 +1061,18 @@ class GL3DDriver {
         m.sx = p[1] !== undefined ? p[1] : 1;
         m.sy = p[2] !== undefined ? p[2] : 1;
         m.sz = p[3] !== undefined ? p[3] : 1;
+        // Hide-via-scale-to-zero: shader-driven meshes (THREE.Points particles)
+        // don't naturally vanish at scale 0 because their vertex shader still
+        // emits gl_PointSize even when modelMatrix collapses positions to the
+        // origin. Flip obj.visible when ALL scale axes are zero; restore when
+        // any axis is non-zero. Harmless for triangle meshes (they were
+        // already invisible at zero scale).
+        const allZero = (m.sx === 0 && m.sy === 0 && m.sz === 0);
         if (m._threeObjects) {
-            for (const obj of m._threeObjects) obj.scale.set(m.sx, m.sy, m.sz);
+            for (const obj of m._threeObjects) {
+                obj.scale.set(m.sx, m.sy, m.sz);
+                obj.visible = !allZero;
+            }
         }
         return CMD_OK;
     }

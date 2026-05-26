@@ -2730,6 +2730,12 @@ class Interpreter {
         bus.on('gl.rotate',            (m) => gl.cmdGL_ROTATE(m.param));
         bus.on('gl.scale',             (m) => gl.cmdGL_SCALE(m.param));
         bus.on('gl.parent',            (m) => gl.cmdGL_PARENT(m.param));
+        bus.on('gl.particles',         (m) => gl.cmdGL_PARTICLES(m.param));
+        bus.on('gl.particles_tick',    (m) => gl.cmdGL_PARTICLES_TICK(m.param));
+        bus.on('gl.particles_param',   (m) => gl.cmdGL_PARTICLES_PARAM(m.param));
+        bus.on('gl.particles_color',   (m) => gl.cmdGL_PARTICLES_COLOR(m.param));
+        bus.on('gl.particles_visible', (m) => gl.cmdGL_PARTICLES_VISIBLE(m.param));
+        bus.on('gl.particles_emit',    (m) => gl.cmdGL_PARTICLES_EMIT(m.param));
         bus.on('gl.instance',          (m) => gl.cmdGL_INSTANCE(m.param));
         bus.on('gl.insthide',          (m) => gl.cmdGL_INSTHIDE(m.param));
         bus.on('gl.draw',              (m) => gl.cmdGL_DRAW(m.param));
@@ -2874,6 +2880,12 @@ class Interpreter {
     cmdGL_ROTATE(p)            { return this.kernel.post({syscall:'gl.rotate',param:p}); }
     cmdGL_SCALE(p)             { return this.kernel.post({syscall:'gl.scale',param:p}); }
     cmdGL_PARENT(p)            { return this.kernel.post({syscall:'gl.parent',param:p}); }
+    cmdGL_PARTICLES(p)         { return this.kernel.post({syscall:'gl.particles',param:p}); }
+    cmdGL_PARTICLES_TICK(p)    { return this.kernel.post({syscall:'gl.particles_tick',param:p}); }
+    cmdGL_PARTICLES_PARAM(p)   { return this.kernel.post({syscall:'gl.particles_param',param:p}); }
+    cmdGL_PARTICLES_COLOR(p)   { return this.kernel.post({syscall:'gl.particles_color',param:p}); }
+    cmdGL_PARTICLES_VISIBLE(p) { return this.kernel.post({syscall:'gl.particles_visible',param:p}); }
+    cmdGL_PARTICLES_EMIT(p)    { return this.kernel.post({syscall:'gl.particles_emit',param:p}); }
     cmdGL_INSTANCE(p)          { return this.kernel.post({syscall:'gl.instance',param:p}); }
     cmdGL_INSTHIDE(p)          { return this.kernel.post({syscall:'gl.insthide',param:p}); }
     cmdGL_DRAW(p)              { return this.kernel.post({syscall:'gl.draw',param:p}); }
@@ -3567,7 +3579,13 @@ class Interpreter {
             // GL 3D rendering system — longest names first
             ['GL.PERSPECTIVE', 0,  (p) => this.cmdGL_PERSPECTIVE(p),   1],
             ['GL.TRANSLATE',   0,  (p) => this.cmdGL_TRANSLATE(p),     1],
-            ['GL.PARENT',      0,  (p) => this.cmdGL_PARENT(p),        1],
+            ['GL.PARENT',           0,  (p) => this.cmdGL_PARENT(p),           1],
+            ['GL.PARTICLES_VISIBLE', 0,  (p) => this.cmdGL_PARTICLES_VISIBLE(p), 1],
+            ['GL.PARTICLES_EMIT',    0,  (p) => this.cmdGL_PARTICLES_EMIT(p),    1],
+            ['GL.PARTICLES_TICK',    0,  (p) => this.cmdGL_PARTICLES_TICK(p),    1],
+            ['GL.PARTICLES_PARAM',   0,  (p) => this.cmdGL_PARTICLES_PARAM(p),   1],
+            ['GL.PARTICLES_COLOR',   0,  (p) => this.cmdGL_PARTICLES_COLOR(p),   1],
+            ['GL.PARTICLES',         0,  (p) => this.cmdGL_PARTICLES(p),         1],
             ['GL.INSTANCE',    0,  (p) => this.cmdGL_INSTANCE(p),      1],
             ['GL.INSTHIDE',    0,  (p) => this.cmdGL_INSTHIDE(p),      1],
             ['GL.SOLIDWIRE',   0,  ()  => this.cmdGL_SOLIDWIRE()],
