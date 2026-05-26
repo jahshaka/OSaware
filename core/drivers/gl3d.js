@@ -821,10 +821,13 @@ class GL3DDriver {
         const spreadArg = (parts.length >= 10 && !isNaN(parseFloat(parts[9])))  ? parseFloat(parts[9])  : undefined;
         if (!g._particlePresets) {
             g._particlePresets = {
-                'fire':   (opts) => this._buildFireParticles(opts, { youngR:  60, youngG: 140, youngB: 255, oldR:  10, oldG:  20, oldB:  80, trail: 3.0, spread: 0.5 }),
-                'smoke':  (opts) => this._buildFireParticles(opts, { youngR: 200, youngG: 200, youngB: 210, oldR:  50, oldG:  50, oldB:  60, trail: 2.5, spread: 0.6 }),
-                'plasma': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG:  80, youngB: 220, oldR: 120, oldG:   0, oldB: 180, trail: 2.5, spread: 0.4 }),
-                'sparks': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG: 255, youngB: 180, oldR: 255, oldG:  80, oldB:   0, trail: 2.0, spread: 0.3 }),
+                // 'warm' flavour: white-yellow → orange → ember 3-stop gradient, tinted by user RGB.
+                'fire':   (opts) => this._buildFireParticles(opts, { youngR: 255, youngG: 230, youngB: 100, oldR: 200, oldG:  30, oldB:   0, trail: 3.0, spread: 0.4, flavor: 'warm' }),
+                // 'tinted' flavour: linear interpolation between user young/old colours (keeps full colour control for sci-fi looks).
+                'plasma': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG:  80, youngB: 220, oldR: 120, oldG:   0, oldB: 180, trail: 2.5, spread: 0.4, flavor: 'tinted' }),
+                'sparks': (opts) => this._buildFireParticles(opts, { youngR: 255, youngG: 255, youngB: 180, oldR: 255, oldG:  80, oldB:   0, trail: 2.0, spread: 0.3, flavor: 'tinted' }),
+                // Dedicated smoke builder — normal alpha blending, particles GROW + drift up, bell-curve alpha for cloudy fade.
+                'smoke':  (opts) => this._buildSmokeParticles(opts, { youngR: 210, youngG: 210, youngB: 220, oldR:  60, oldG:  60, oldB:  70, trail: 2.5, spread: 0.6 }),
             };
         }
         const builder = g._particlePresets[preset];
@@ -866,9 +869,12 @@ class GL3DDriver {
         const oR = c.oldR,   oG = c.oldG,   oB = c.oldB;
         const trail  = (opts.trail  !== undefined) ? opts.trail  : defaults.trail;
         const spread = (opts.spread !== undefined) ? opts.spread : defaults.spread;
+        const flavor = defaults.flavor || 'tinted';
+        const isWarm = (flavor === 'warm');
         const geom = new THREE.BufferGeometry();
         const positions = new Float32Array(count * 3);
         const seeds     = new Float32Array(count);
+        const sprites   = isWarm ? new Float32Array(count) : null;
         const halfH = trail * 0.5;
         // Yomotsu-style cone distribution: uniform area in the base circle,
         // height tapers from full at centre to 0 at the rim — narrow at top.
@@ -879,20 +885,260 @@ class GL3DDriver {
             positions[3*i + 1] = (spread - r) / spread * halfH + halfH;
             positions[3*i + 2] = Math.sin(angle) * r;
             seeds[i] = Math.random();
+            // Warm path: pick one of 4 flame frames from the sprite atlas.
+            // Atlas is 4 frames horizontally, so offset = 0, 0.25, 0.50, or 0.75.
+            if (isWarm) sprites[i] = 0.25 * Math.floor(Math.random() * 4);
         }
         geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geom.setAttribute('seed',     new THREE.BufferAttribute(seeds, 1));
+        if (isWarm) geom.setAttribute('sprite', new THREE.BufferAttribute(sprites, 1));
         const uniforms = {
             time:        { value: 0 },
             lifetime:    { value: 1.20 },
             trailMul:    { value: 1.0 },
             spreadMul:   { value: 1.0 },
-            pointSize:   { value: 9.5 },
-            opacity:     { value: 0.10 },
+            // Warm path: pointSize is WORLD UNITS (like yomotsu's material.size).
+            //   Default 0.4 matches the reference example exactly. The vertex
+            //   shader scales it to screen pixels via perspectiveScale / -mv.z.
+            // Tinted path: pointSize is SCREEN PIXELS at distance 1, scaled by
+            //   (300/-mv.z) — the legacy formula (saturates at GPU max past z<~3
+            //   but that's OK for tight cone-bloom glows).
+            pointSize:   { value: isWarm ? 0.4  : 9.5 },
+            opacity:     { value: isWarm ? 1.0  : 0.10 },
             intensity:   { value: 1.0 },
             seedOffset:  { value: 13.0 },
             sizeFalloff: { value: 1.2 },
             emitCutoff:  { value: 1e9 },
+            colorYoung:  { value: new THREE.Color(yR/255, yG/255, yB/255) },
+            colorOld:    { value: new THREE.Color(oR/255, oG/255, oB/255) },
+        };
+        if (isWarm) {
+            uniforms.map = { value: this._getFlameSpriteTexture() };
+            // Perspective-correct sprite sizing (yomotsu's setPerspective formula).
+            // heightOfNearPlane = canvasHeight / (2 * tan(fov/2)). Multiply by
+            // pointSize (world units) and divide by view-space depth (w) to get
+            // on-screen pixels. Avoids the gl_PointSize GPU-max clamp that turned
+            // every warm fire into a uniform clamped blob.
+            const t = this._glState().three;
+            const canvasH = (t && t.renderer && t.renderer.domElement && t.renderer.domElement.height) || 600;
+            const fov = (t && t.camera && t.camera.fov) ? t.camera.fov : 55;
+            uniforms.perspectiveScale = { value: canvasH / (2 * Math.tan(fov * Math.PI / 360)) };
+        }
+        const mat = new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader:   this._buildFireVertexShader(flavor),
+            fragmentShader: this._buildFireFragmentShader(flavor),
+            blending: THREE.AdditiveBlending,
+            depthTest: true,
+            depthWrite: false,
+            transparent: true,
+        });
+        const points = new THREE.Points(geom, mat);
+        points.frustumCulled = false;  // bounding sphere of zero'd positions is misleading
+        return { points, uniforms };
+    }
+
+// Fire vertex shader. Two flavours:
+//   'tinted' — linear phase·Y scaling, smooth radial-shrink size. Used by
+//              plasma/sparks/SKYFOX exhaust (full colour control, no texture).
+//   'warm'   — yomotsu-style quadraticIn ease (phase^4) on Y so particles stay
+//              near base then dart upward late in life — the "flame lick" motion.
+//              Passes vSprite + vOpacity to the fragment so it can sample the
+//              flame sprite atlas and apply a sin-influence brightness envelope.
+    _buildFireVertexShader(flavor) {
+        if (flavor === 'warm') {
+            return [
+                'uniform float time;',
+                'uniform float lifetime;',
+                'uniform float trailMul;',
+                'uniform float spreadMul;',
+                'uniform float pointSize;',
+                'uniform float perspectiveScale;',
+                'uniform float seedOffset;',
+                'uniform float emitCutoff;',
+                'uniform float intensity;',
+                'attribute float seed;',
+                'attribute float sprite;',
+                'varying float vLife;',
+                'varying float vBorn;',
+                'varying float vSprite;',
+                'varying float vOpacity;',
+                'void main() {',
+                '    float adjusted = time + seed * seedOffset;',
+                '    float cycleNum = floor(adjusted / lifetime);',
+                '    float spawnTime = cycleNum * lifetime - seed * seedOffset;',
+                '    float phase = (adjusted - cycleNum * lifetime) / lifetime;',
+                '    vLife = phase;',
+                '    vBorn = step(spawnTime, emitCutoff);',
+                '    vSprite = sprite;',
+                '    // quadraticIn ease: particles linger low then shoot up (flame licks).',
+                '    float ease = phase * phase * phase * phase;',
+                '    float influence = sin(3.14159 * ease);',
+                '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * ease, position.z * spreadMul);',
+                '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
+                '    gl_Position = projectionMatrix * mv;',
+                '    // Yomotsu opacity envelope: quick rise (min*4), slow decay (1-phase).',
+                '    vOpacity = min(influence * 4.0, 1.0) * (1.0 - phase);',
+                '    // Perspective-correct: pointSize is WORLD UNITS (yomotsu material.size).',
+                '    gl_PointSize = pointSize * perspectiveScale / max(-mv.z, 0.5);',
+                '}'
+            ].join('\n');
+        }
+        // tinted path
+        return [
+            'uniform float time;',
+            'uniform float lifetime;',
+            'uniform float trailMul;',
+            'uniform float spreadMul;',
+            'uniform float pointSize;',
+            'uniform float seedOffset;',
+            'uniform float sizeFalloff;',
+            'uniform float emitCutoff;',
+            'uniform float intensity;',
+            'attribute float seed;',
+            'varying float vLife;',
+            'varying float vBorn;',
+            'void main() {',
+            '    float adjusted = time + seed * seedOffset;',
+            '    float cycleNum = floor(adjusted / lifetime);',
+            '    float spawnTime = cycleNum * lifetime - seed * seedOffset;',
+            '    float phase = (adjusted - cycleNum * lifetime) / lifetime;',
+            '    vLife = phase;',
+            '    vBorn = step(spawnTime, emitCutoff);',
+            '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * phase, position.z * spreadMul);',
+            '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
+            '    gl_Position = projectionMatrix * mv;',
+            '    float shrink = pow(max(0.0, 1.0 - phase), sizeFalloff);',
+            '    gl_PointSize = pointSize * shrink * (300.0 / max(-mv.z, 1.0));',
+            '}'
+        ].join('\n');
+    }
+
+// Fire fragment shader. Two flavours share the vertex shader + cone geometry:
+//   'tinted' — linear mix(colorYoung, colorOld, vLife). Used by plasma/sparks
+//              and by callers (SKYFOX exhaust) who want full colour control.
+//   'warm'   — 3-stop white-yellow → orange → ember ramp, multiplied by the
+//              user's young/old colours as a tint. Pow(2) alpha falloff makes
+//              the hot core at base brighter than the cooling tip. Real fire.
+    _buildFireFragmentShader(flavor) {
+        if (flavor === 'warm') {
+            // Yomotsu sprite-atlas path: real flame shape per particle.
+            // texel.rgb (from the flame atlas) is the SHAPE; we tint it with
+            // the warm 3-stop gradient * the user's young/old colour pair *
+            // the vOpacity envelope from the vertex shader. Additive blending
+            // means many overlapping particles stack into a bright fire core.
+            return [
+                'uniform vec3 colorYoung;',
+                'uniform vec3 colorOld;',
+                'uniform float opacity;',
+                'uniform float intensity;',
+                'uniform sampler2D map;',
+                'varying float vLife;',
+                'varying float vBorn;',
+                'varying float vSprite;',
+                'varying float vOpacity;',
+                'void main() {',
+                '    if (vBorn < 0.5) discard;',
+                '    // Sprite atlas is 4 frames wide — vSprite selects one (0/0.25/0.5/0.75).',
+                '    vec2 texCoord = vec2(gl_PointCoord.x * 0.25 + vSprite, gl_PointCoord.y);',
+                '    vec3 texel = texture2D(map, texCoord).rgb;',
+                '    // Yomotsu-equivalent: texture supplies SHAPE + per-pixel brightness;',
+                '    // a SINGLE colour tints the whole flame. Compounding two colours and a',
+                '    // 3-stop warm gradient was turning the additive stack into a uniform glow',
+                '    // blob (yellow body / red halo = plasma look). Strip back to one colour so',
+                '    // the per-particle flame shapes show through.',
+                '    vec3 color = texel * colorYoung * vOpacity * opacity * intensity;',
+                '    gl_FragColor = vec4(color, 1.0);',
+                '}'
+            ].join('\n');
+        }
+        // Tinted path: radial gradient (no texture). Used by plasma/sparks
+        // and any caller that wants full colour control without a flame shape.
+        return [
+            'uniform vec3 colorYoung;',
+            'uniform vec3 colorOld;',
+            'uniform float opacity;',
+            'uniform float intensity;',
+            'varying float vLife;',
+            'varying float vBorn;',
+            'void main() {',
+            '    if (vBorn < 0.5) discard;',
+            '    vec2 c = gl_PointCoord - 0.5;',
+            '    float r = length(c);',
+            '    if (r > 0.5) discard;',
+            '    float falloff = smoothstep(0.5, 0.0, r);',
+            '    vec3 color = mix(colorYoung, colorOld, vLife);',
+            '    float lifeAlpha = 1.0 - vLife;',
+            '    float alpha = falloff * lifeAlpha * opacity * intensity;',
+            '    gl_FragColor = vec4(color, alpha);',
+            '}'
+        ].join('\n');
+    }
+
+// Flame sprite texture (yomotsu/three-particle-fire base64 PNG — 4 flame
+// frames in a horizontal atlas, 256x64). Lazy-loaded on first use, cached
+// on the kernel so subsequent fire systems share one GPU texture. Async
+// image load means the first frame or two render without a texture (blank
+// transparent); needsUpdate fires once the image decodes.
+    _getFlameSpriteTexture() {
+        if (this._flameTextureCache) return this._flameTextureCache;
+        const dataUrl = 'data:image/png;base64,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';
+        const image = new Image();
+        const texture = new THREE.Texture(image);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        // Set src BEFORE registering onload, then check `image.complete` —
+        // some browsers decode data URLs synchronously and would otherwise
+        // miss the onload event entirely (leaving the texture stuck as the
+        // default blank placeholder = white blob = "plasma look").
+        image.src = dataUrl;
+        if (image.complete && image.naturalWidth > 0) {
+            texture.needsUpdate = true;
+        } else {
+            image.onload = () => { texture.needsUpdate = true; };
+        }
+        this._flameTextureCache = texture;
+        return texture;
+    }
+
+// Smoke preset builder — DIFFERENT shader from fire:
+//   * NormalBlending (clouds occlude, they don't accumulate)
+//   * Particle size GROWS over life (mix(0.4, 2.4, phase)) — cloud expansion
+//   * Slow upward drift via `rise` uniform (independent of trail/spread)
+//   * Bell-curve alpha (sin(phase * PI)) — born invisible, peaks mid-life, dissipates
+//   * Cone XZ jitter expands (1 + phase * 0.4) so the plume widens as it rises
+    _buildSmokeParticles(opts, defaults) {
+        const { count } = opts;
+        const c = opts.color || defaults;
+        const yR = c.youngR, yG = c.youngG, yB = c.youngB;
+        const oR = c.oldR,   oG = c.oldG,   oB = c.oldB;
+        const trail  = (opts.trail  !== undefined) ? opts.trail  : defaults.trail;
+        const spread = (opts.spread !== undefined) ? opts.spread : defaults.spread;
+        const geom = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const seeds     = new Float32Array(count);
+        // Smoke starts as a small disc at the base — height comes from `rise`,
+        // not from the cone Y like fire. Spread = base radius of the initial puff.
+        for (let i = 0; i < count; i++) {
+            const r     = Math.sqrt(Math.random()) * spread;
+            const angle = Math.random() * 2 * Math.PI;
+            positions[3*i + 0] = Math.cos(angle) * r;
+            positions[3*i + 1] = Math.random() * spread * 0.4;
+            positions[3*i + 2] = Math.sin(angle) * r;
+            seeds[i] = Math.random();
+        }
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geom.setAttribute('seed',     new THREE.BufferAttribute(seeds, 1));
+        const uniforms = {
+            time:        { value: 0 },
+            lifetime:    { value: 2.0 },
+            trailMul:    { value: 1.0 },
+            spreadMul:   { value: 1.0 },
+            pointSize:   { value: 16.0 },
+            opacity:     { value: 0.18 },
+            intensity:   { value: 1.0 },
+            seedOffset:  { value: 17.0 },
+            emitCutoff:  { value: 1e9 },
+            rise:        { value: trail },          // drift distance over a full lifetime
             colorYoung:  { value: new THREE.Color(yR/255, yG/255, yB/255) },
             colorOld:    { value: new THREE.Color(oR/255, oG/255, oB/255) },
         };
@@ -905,9 +1151,9 @@ class GL3DDriver {
                 'uniform float spreadMul;',
                 'uniform float pointSize;',
                 'uniform float seedOffset;',
-                'uniform float sizeFalloff;',
                 'uniform float emitCutoff;',
                 'uniform float intensity;',
+                'uniform float rise;',
                 'attribute float seed;',
                 'varying float vLife;',
                 'varying float vBorn;',
@@ -918,14 +1164,18 @@ class GL3DDriver {
                 '    float phase = (adjusted - cycleNum * lifetime) / lifetime;',
                 '    vLife = phase;',
                 '    vBorn = step(spawnTime, emitCutoff);',
-                '    // Bloom: position.xz fixed (cone XZ ring); position.y scales',
-                '    // with phase from 0 (collapsed at base) to full (top of cone).',
-                '    // intensity also stretches the cone Y so low thrust = short flame.',
-                '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * phase, position.z * spreadMul);',
+                '    // Plume widens as it rises; Y drifts up over lifetime.',
+                '    float widen = 1.0 + phase * 0.4;',
+                '    vec3 pos = vec3(',
+                '        position.x * spreadMul * widen,',
+                '        position.y * trailMul + phase * rise * intensity,',
+                '        position.z * spreadMul * widen',
+                '    );',
                 '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
                 '    gl_Position = projectionMatrix * mv;',
-                '    float shrink = pow(max(0.0, 1.0 - phase), sizeFalloff);',
-                '    gl_PointSize = pointSize * shrink * (300.0 / max(-mv.z, 1.0));',
+                '    // Cloud puffs GROW over life (opposite of fire shrink).',
+                '    float growth = mix(0.4, 2.4, phase);',
+                '    gl_PointSize = pointSize * growth * (300.0 / max(-mv.z, 1.0));',
                 '}'
             ].join('\n'),
             fragmentShader: [
@@ -940,19 +1190,22 @@ class GL3DDriver {
                 '    vec2 c = gl_PointCoord - 0.5;',
                 '    float r = length(c);',
                 '    if (r > 0.5) discard;',
-                '    float falloff = smoothstep(0.5, 0.0, r);',
+                '    // Soft, fuzzy cloud edge — wider falloff than fire.',
+                '    float falloff = smoothstep(0.5, 0.05, r);',
                 '    vec3 color = mix(colorYoung, colorOld, vLife);',
-                '    float alpha = falloff * (1.0 - vLife) * opacity * intensity;',
+                '    // Bell-curve alpha: born invisible, peak around phase=0.5, dissipate.',
+                '    float lifeMask = sin(vLife * 3.14159);',
+                '    float alpha = falloff * lifeMask * opacity * intensity;',
                 '    gl_FragColor = vec4(color, alpha);',
                 '}'
             ].join('\n'),
-            blending: THREE.AdditiveBlending,
+            blending: THREE.NormalBlending,
             depthTest: true,
             depthWrite: false,
             transparent: true,
         });
         const points = new THREE.Points(geom, mat);
-        points.frustumCulled = false;  // bounding sphere of zero'd positions is misleading
+        points.frustumCulled = false;
         return { points, uniforms };
     }
 
