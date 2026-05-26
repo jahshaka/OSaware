@@ -2730,6 +2730,7 @@ class Interpreter {
         bus.on('gl.rotate',            (m) => gl.cmdGL_ROTATE(m.param));
         bus.on('gl.scale',             (m) => gl.cmdGL_SCALE(m.param));
         bus.on('gl.parent',            (m) => gl.cmdGL_PARENT(m.param));
+        bus.on('gl.pbr',               (m) => gl.cmdGL_PBR(m.param));
         bus.on('gl.particles',         (m) => gl.cmdGL_PARTICLES(m.param));
         bus.on('gl.particles_tick',    (m) => gl.cmdGL_PARTICLES_TICK(m.param));
         bus.on('gl.particles_param',   (m) => gl.cmdGL_PARTICLES_PARAM(m.param));
@@ -2880,6 +2881,7 @@ class Interpreter {
     cmdGL_ROTATE(p)            { return this.kernel.post({syscall:'gl.rotate',param:p}); }
     cmdGL_SCALE(p)             { return this.kernel.post({syscall:'gl.scale',param:p}); }
     cmdGL_PARENT(p)            { return this.kernel.post({syscall:'gl.parent',param:p}); }
+    cmdGL_PBR(p)               { return this.kernel.post({syscall:'gl.pbr',param:p}); }
     cmdGL_PARTICLES(p)         { return this.kernel.post({syscall:'gl.particles',param:p}); }
     cmdGL_PARTICLES_TICK(p)    { return this.kernel.post({syscall:'gl.particles_tick',param:p}); }
     cmdGL_PARTICLES_PARAM(p)   { return this.kernel.post({syscall:'gl.particles_param',param:p}); }
@@ -3580,6 +3582,7 @@ class Interpreter {
             ['GL.PERSPECTIVE', 0,  (p) => this.cmdGL_PERSPECTIVE(p),   1],
             ['GL.TRANSLATE',   0,  (p) => this.cmdGL_TRANSLATE(p),     1],
             ['GL.PARENT',           0,  (p) => this.cmdGL_PARENT(p),           1],
+            ['GL.PBR',              0,  (p) => this.cmdGL_PBR(p),              1],
             ['GL.PARTICLES_VISIBLE', 0,  (p) => this.cmdGL_PARTICLES_VISIBLE(p), 1],
             ['GL.PARTICLES_EMIT',    0,  (p) => this.cmdGL_PARTICLES_EMIT(p),    1],
             ['GL.PARTICLES_TICK',    0,  (p) => this.cmdGL_PARTICLES_TICK(p),    1],

@@ -735,6 +735,39 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+// GL.PBR id, metalness, roughness — adjust PBR material properties on a
+// loaded GLB/GLTF model. GLBs often ship with high metalness (gun-metal,
+// chrome, etc.) which renders as BLACK without an environment map to
+// reflect — the directional light alone can't fill metallic surfaces. This
+// command walks every mesh in the model and overrides metalness + roughness
+// on any MeshStandardMaterial / MeshPhysicalMaterial. Call after GL.LOAD
+// (before GL.INSTANCE if you're instancing — the InstancedMesh shares the
+// same material reference, so adjusting once propagates to all instances).
+//
+// metalness 0 = pure diffuse (works fine under directional+ambient).
+// metalness 1 = pure metal (needs envMap to look correct).
+// roughness 0 = mirror-glossy, 1 = matte.
+    cmdGL_PBR(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 3);
+        const m = g.meshes[Math.round(p[0])];
+        if (!m || !m._threeObjects) return CMD_OK;
+        const metalness = (p[1] !== undefined) ? p[1] : 0.0;
+        const roughness = (p[2] !== undefined) ? p[2] : 0.6;
+        for (const obj of m._threeObjects) {
+            obj.traverse((c) => {
+                if (!c.isMesh || !c.material) return;
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                for (const mat of mats) {
+                    if (mat.metalness !== undefined) mat.metalness = metalness;
+                    if (mat.roughness !== undefined) mat.roughness = roughness;
+                    mat.needsUpdate = true;
+                }
+            });
+        }
+        return CMD_OK;
+    }
+
 // GL.PARENT child_id, parent_id — re-parent child mesh under parent mesh's
 // scene graph node. After parenting, GL.TRANSLATE / GL.ROTATE / GL.SCALE
 // on the child operate in the parent's LOCAL frame — child follows the
