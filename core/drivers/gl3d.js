@@ -1420,21 +1420,39 @@ class GL3DDriver {
     // Sets the kernel's _glJustRendered flag so the next _scheduleNextTick can
     // promote a short setTimeout to requestAnimationFrame for vsync alignment.
     _glRenderFrame(t) {
-        // One-time shader warm-up on a brand-new device. The GPU driver caches
-        // compiled WebGL programs across page loads — on a cold device cache the
-        // first compile of every material + post-fx shader stalls the first
-        // frames. UnrealBloomPass is the worst offender (5 blur passes + threshold
-        // + composite, all compiling on first composer.render()); during that
-        // stall the bloom render-targets read undefined data which feeds back
-        // into the additive composite — visible as "blown-out" plasma particles
-        // for the entire first session. A page refresh hits the warm GPU cache
-        // and the artifact disappears.
-        // Fix: pre-compile materials with renderer.compile(), then run one
-        // throwaway composer.render() with renderToScreen=false so the bloom
-        // chain compiles too. ~50-300ms cost on first-ever device run, $0 after.
+        // Lazy-init warm-up. Three things make first-render flaky on a cold
+        // device and need pre-flighting:
+        //   (1) GPU program cache cold → every material + post-fx shader has to
+        //       compile (UnrealBloomPass = 5 blur passes + threshold + composite).
+        //   (2) GLB textures upload to the GPU on first render, not during
+        //       renderer.compile() — first few frames render with default-blank
+        //       textures, plane appears bright/white, bloom amplifies, plasma
+        //       in front of the bright zone looks blown out.
+        //   (3) Composer chain can grow LATER (user toggles bloom/AA mid-game)
+        //       — a one-shot warm-up flag wouldn't cover that path. So we
+        //       invalidate the flag from cmdGL_BLOOM / cmdGL_AA on every
+        //       pass change, forcing a re-warm next DRAWALL.
         if (!t._shadersWarmedUp) {
             try {
+                // (a) compile every material's shader program.
                 t.renderer.compile(t.scene, t.camera);
+                // (b) force every texture in every material to upload now.
+                //     initTexture is a no-op if the texture is already on the GPU.
+                t.scene.traverse((obj) => {
+                    if (!obj.material) return;
+                    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                    for (const mat of mats) {
+                        for (const key in mat) {
+                            const v = mat[key];
+                            if (v && v.isTexture) {
+                                try { t.renderer.initTexture(v); } catch (_) {}
+                            }
+                        }
+                    }
+                });
+                // (c) if a post-fx chain is active, render through it once with
+                //     renderToScreen=false to compile bloom/FXAA/copy shaders
+                //     and initialise the internal ping-pong render targets.
                 if (t.composer) {
                     const wasOnScreen = t.composer.renderToScreen;
                     t.composer.renderToScreen = false;
@@ -1505,6 +1523,9 @@ class GL3DDriver {
             const sz = new THREE.Vector2(); t.renderer.getDrawingBufferSize(sz);
             t.bloomPass = new THREE.UnrealBloomPass(sz, strength, radius, threshold);
             c.insertPass(t.bloomPass, 1);   // right after the RenderPass
+            // New uncompiled bloom shaders — force the next DRAWALL to re-run
+            // the warm-up so they compile before any user-visible frame.
+            t._shadersWarmedUp = false;
         } else {
             t.bloomPass.strength = strength; t.bloomPass.radius = radius; t.bloomPass.threshold = threshold;
         }
@@ -1528,6 +1549,9 @@ class GL3DDriver {
                 t.fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
                 t.fxaaPass.material.uniforms['resolution'].value.set(1 / Math.max(1, sz.x), 1 / Math.max(1, sz.y));
                 c.addPass(t.fxaaPass);   // append — runs after the scene render + bloom
+                // New uncompiled FXAA shader — invalidate the warm-up so the
+                // next DRAWALL re-compiles before the user sees a real frame.
+                t._shadersWarmedUp = false;
             }
         } else if (t.composer && t.fxaaPass) {
             t.composer.removePass(t.fxaaPass);
@@ -3023,6 +3047,11 @@ void main() {
                     const pivot = new THREE.Group();
                     pivot.add(model);
                     t.scene.add(pivot);
+                    // New uncompiled materials + unuploaded textures from the
+                    // GLB just landed in the scene — invalidate warm-up so the
+                    // next DRAWALL compiles them and uploads their textures
+                    // before any user-visible frame.
+                    t._shadersWarmedUp = false;
                     const id = g.nextId++;
                     const fm = { id, verts: [], faces: [], colour: [255, 255, 255],
                         shine: 30, alpha: 1.0, emissive: [0, 0, 0],
