@@ -1009,7 +1009,11 @@ class GL3DDriver {
             '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
             '    gl_Position = projectionMatrix * mv;',
             '    float shrink = pow(max(0.0, 1.0 - phase), sizeFalloff);',
-            '    gl_PointSize = pointSize * shrink * (300.0 / max(-mv.z, 1.0));',
+            '    // Hard-clamp gl_PointSize at 64 so behaviour is consistent across',
+            '    // GPUs. Different drivers clamp internally at 64/256/1024 — without',
+            '    // an explicit cap, plasma blows out on high-cap GPUs (huge particles',
+            '    // overlap into a saturated additive core).',
+            '    gl_PointSize = min(pointSize * shrink * (300.0 / max(-mv.z, 1.0)), 64.0);',
             '}'
         ].join('\n');
     }
