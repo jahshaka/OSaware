@@ -1420,6 +1420,32 @@ class GL3DDriver {
     // Sets the kernel's _glJustRendered flag so the next _scheduleNextTick can
     // promote a short setTimeout to requestAnimationFrame for vsync alignment.
     _glRenderFrame(t) {
+        // One-time shader warm-up on a brand-new device. The GPU driver caches
+        // compiled WebGL programs across page loads — on a cold device cache the
+        // first compile of every material + post-fx shader stalls the first
+        // frames. UnrealBloomPass is the worst offender (5 blur passes + threshold
+        // + composite, all compiling on first composer.render()); during that
+        // stall the bloom render-targets read undefined data which feeds back
+        // into the additive composite — visible as "blown-out" plasma particles
+        // for the entire first session. A page refresh hits the warm GPU cache
+        // and the artifact disappears.
+        // Fix: pre-compile materials with renderer.compile(), then run one
+        // throwaway composer.render() with renderToScreen=false so the bloom
+        // chain compiles too. ~50-300ms cost on first-ever device run, $0 after.
+        if (!t._shadersWarmedUp) {
+            try {
+                t.renderer.compile(t.scene, t.camera);
+                if (t.composer) {
+                    const wasOnScreen = t.composer.renderToScreen;
+                    t.composer.renderToScreen = false;
+                    t.composer.render();
+                    t.composer.renderToScreen = wasOnScreen;
+                }
+            } catch (e) {
+                if (typeof console !== 'undefined') console.warn('GL shader warm-up failed:', e);
+            }
+            t._shadersWarmedUp = true;
+        }
         if (this._gl && this._gl.fpsOn && this._fpsDiv) {
             const g = this._gl;
             g._fpsFrames = (g._fpsFrames || 0) + 1;
