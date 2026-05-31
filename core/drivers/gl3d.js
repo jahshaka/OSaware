@@ -810,15 +810,18 @@ class GL3DDriver {
         if (!t) return CMD_OK;
         const parts = String(param || '').split(',').map(s => s.trim());
         const preset = (parts[0] || '').replace(/^['"]|['"]$/g, '').toLowerCase();
-        const count = Math.min(2000, Math.max(1, Math.round(parseFloat(parts[1] || '150'))));
+        // evalCalc (not parseFloat) so BASIC variables resolve. parseFloat("PCY1")
+        // returns NaN and silently produces invisible particles.
+        const ev = (s) => Number(this.evalCalc(s, ASS_NUMBER));
+        const count = Math.min(2000, Math.max(1, Math.round(ev(parts[1] || '150'))));
         // Optional colour overrides (each preset has its own defaults if these are absent)
         const colorArgs = (parts.length >= 8) ? {
-            youngR: parseFloat(parts[2]), youngG: parseFloat(parts[3]), youngB: parseFloat(parts[4]),
-            oldR:   parseFloat(parts[5]), oldG:   parseFloat(parts[6]), oldB:   parseFloat(parts[7]),
+            youngR: ev(parts[2]), youngG: ev(parts[3]), youngB: ev(parts[4]),
+            oldR:   ev(parts[5]), oldG:   ev(parts[6]), oldB:   ev(parts[7]),
         } : null;
         // Optional trail (cone height) + spread (cone base radius) as args 9 & 10
-        const trailArg  = (parts.length >= 9  && !isNaN(parseFloat(parts[8])))  ? parseFloat(parts[8])  : undefined;
-        const spreadArg = (parts.length >= 10 && !isNaN(parseFloat(parts[9])))  ? parseFloat(parts[9])  : undefined;
+        const trailArg  = (parts.length >= 9  && parts[8] !== '' && !isNaN(ev(parts[8]))) ? ev(parts[8])  : undefined;
+        const spreadArg = (parts.length >= 10 && parts[9] !== '' && !isNaN(ev(parts[9]))) ? ev(parts[9])  : undefined;
         if (!g._particlePresets) {
             g._particlePresets = {
                 // 'warm' flavour: white-yellow → orange → ember 3-stop gradient, tinted by user RGB.
