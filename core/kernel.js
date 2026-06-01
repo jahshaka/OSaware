@@ -4544,7 +4544,14 @@ class Interpreter {
                         this.if_line = '';
                         this._inBatch = true;  // prevent cmdGOTO from calling tick()
                         const _stackLenBefore = this._sub_stack.length;
+                        // run_line was incremented past the IF line before this loop.
+                        // Restore it to the IF line so GOSUB/CALL in the THEN branch
+                        // computes a correct return address (run_line + 1 = line AFTER IF,
+                        // not two past it which would skip the next program line).
+                        const _savedRunLine = this.run_line;
+                        this.run_line = _ifSourceLine;
                         const ifNewLine = this.interpret(_savedIfLine);
+                        if (ifNewLine < 0 || ifNewLine === CMD_OK) this.run_line = _savedRunLine;
                         this._inBatch = false;
                         if      (ifNewLine === -2 || ifNewLine === CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
                         else if (ifNewLine >= 0) {

@@ -808,7 +808,7 @@ class GL3DDriver {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
-        const parts = String(param || '').split(',').map(s => s.trim());
+        const parts = this._glSplitTopComma(String(param || '')).map(s => s.trim());
         const preset = (parts[0] || '').replace(/^['"]|['"]$/g, '').toLowerCase();
         // evalCalc (not parseFloat) so BASIC variables resolve. parseFloat("PCY1")
         // returns NaN and silently produces invisible particles.
@@ -1258,7 +1258,7 @@ class GL3DDriver {
 // Use GL.PARTICLES_COLOR for the colour pair (vec3 isn't a single scalar).
     cmdGL_PARTICLES_PARAM(param) {
         const g = this._glState();
-        const parts = String(param || '').split(',').map(s => s.trim());
+        const parts = this._glSplitTopComma(String(param || '')).map(s => s.trim());
         if (parts.length < 3) return CMD_OK;
         // CRITICAL: use evalCalc (not parseFloat) so BASIC variables resolve.
         // parseFloat("EXHID") returns NaN; evalCalc looks the variable up.
@@ -3288,15 +3288,46 @@ void main() {
         return CMD_OK;
     }
 
-// Helper: parse up to n floats from a comma-separated param string
+// Helper: split a param string on commas at paren-depth 0 (string-quote
+// aware). Used by GL handlers that need raw tokens (e.g. GL.PARTICLES which
+// has a preset string + numeric args, GL.PARTICLES_PARAM which has id + name
+// + value). Avoids tearing nested array elements like FPOOL(FS, 0) apart.
+    _glSplitTopComma(raw) {
+        const out = [];
+        let inQ = false, depth = 0, start = 0;
+        for (let i = 0; i <= raw.length; i++) {
+            const c = raw[i];
+            if (c === '"' || c === "'") { inQ = !inQ; continue; }
+            if (!inQ) {
+                if (c === '(') depth++;
+                else if (c === ')') depth--;
+            }
+            if (!inQ && depth === 0 && (c === ',' || i === raw.length)) {
+                out.push(raw.substring(start, i));
+                start = i + 1;
+            }
+        }
+        return out;
+    }
+
+// Helper: parse up to n floats from a comma-separated param string.
+// Splits on commas at paren-depth 0 only — so nested 2D array elements like
+// FPOOL(FS, 0) survive as one arg instead of being torn apart at the inner
+// comma. (Pure scalar args like "1.5" are unaffected; only nested array
+// calls or function calls with their own commas benefit from depth-tracking.)
     _glParseFloats(param, n) {
         if (!param) return new Array(n).fill(0);
         const raw = this.trim(String(param));
         const result = [];
-        let inQ = false, start = 0;
+        let inQ = false, depth = 0, start = 0;
         for (let i = 0; i <= raw.length; i++) {
-            if (raw[i] === '"') { inQ = !inQ; continue; }
-            if (!inQ && (raw[i] === ',' || i === raw.length)) {
+            const c = raw[i];
+            if (c === '"') { inQ = !inQ; continue; }
+            if (!inQ) {
+                if (c === '(') depth++;
+                else if (c === ')') depth--;
+            }
+            if (!inQ && depth === 0 && (c === ',' || i === raw.length)) {
                 const token = this.trim(raw.substring(start, i));
                 result.push(token ? Number(this.evalCalc(token, ASS_NUMBER)) : 0);
                 start = i + 1;

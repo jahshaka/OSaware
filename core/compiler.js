@@ -61,19 +61,37 @@ class Compiler {
         return String(s).trim();
     }
 
+    // _splitTopLevelCommas — split on commas at paren-depth 0 so nested array
+    // calls like TARGETID(P) inside TANK(TARGETID(P), 1) survive as one arg.
+    _splitTopLevelCommas(s) {
+        const parts = [];
+        let depth = 0, start = 0;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (c === '(') depth++;
+            else if (c === ')') depth--;
+            else if (c === ',' && depth === 0) {
+                parts.push(s.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.push(s.substring(start));
+        return parts;
+    }
+
     // _evalArrayIndex — compute flat array index from a possibly multi-dimensional
     // index expression like "r,c" or "i" or "x*2+1".
     // For 2D: uses _dimCols[name] stored by DIM to compute r*cols+c.
     _evalArrayIndex(inner, baseName) {
-        const ci = inner.indexOf(',');
-        if (ci < 0) {
-            // 1D: simple expression
-            const n = Number(inner);
-            if (!Number.isNaN(n) && inner.trim() !== '') return n;
-            return this.evalCalc(inner, ASS_NUMBER, 0) || 0;
+        // Use paren-aware split so nested array calls (e.g. TARGETID(P) inside
+        // TANK(TARGETID(P), 1)) don't get torn apart at their inner comma.
+        const parts = this._splitTopLevelCommas(inner);
+        if (parts.length === 1) {
+            const single = parts[0];
+            const n = Number(single);
+            if (!Number.isNaN(n) && single.trim() !== '') return n;
+            return this.evalCalc(single, ASS_NUMBER, 0) || 0;
         }
-        // 2D (or more): split on comma, evaluate each, combine into flat index
-        const parts = inner.split(',');
         const indices = parts.map(p => {
             const n = Number(p.trim());
             return (!Number.isNaN(n) && p.trim() !== '') ? n : (this.evalCalc(p.trim(), ASS_NUMBER, 0) || 0);
@@ -120,10 +138,28 @@ class Compiler {
     // -----------------------------------------------------------------------
     // getElement  –  extract the array index from a variable name like A(3).
     // -----------------------------------------------------------------------
+    // _matchingClose — find the close-paren matching an open-paren at `openIdx`,
+    // respecting nested parens. Returns -1 if unmatched. Critical for nested
+    // array calls: TANK(TARGETID(P), 1) — the matching close is the LAST `)`,
+    // not the first one (which closes TARGETID(P) instead of TANK).
+    _matchingClose(s, openIdx) {
+        let depth = 0;
+        for (let i = openIdx; i < s.length; i++) {
+            const c = s[i];
+            if (c === '(') depth++;
+            else if (c === ')') {
+                depth--;
+                if (depth === 0) return i;
+            }
+        }
+        return -1;
+    }
+
     getElement(variableName) {
         const parenOpen  = variableName.indexOf('(');
-        const parenClose = variableName.indexOf(')');
-        if (parenClose <= parenOpen) return 0;
+        if (parenOpen < 0) return 0;
+        const parenClose = this._matchingClose(variableName, parenOpen);
+        if (parenClose < 0) return 0;
 
         const inner = variableName.substring(parenOpen + 1, parenClose);
         const baseName = variableName.substring(0, parenOpen);
@@ -137,11 +173,12 @@ class Compiler {
         // Variable names are case-sensitive (Model B). Trim only.
         variableName = variableName.trim();
 
-        // For arrays, extract base name and element index.
+        // For arrays, extract base name and element index. Use _matchingClose
+        // so nested calls like TANK(TARGETID(P), 1) resolve to the OUTER `)`.
         let element = 0;
         if (varType === ASS_ARRAY_NUMBER || varType === ASS_ARRAY_STRING) {
             const parenOpen  = variableName.indexOf('(');
-            const parenClose = variableName.indexOf(')');
+            const parenClose = parenOpen >= 0 ? this._matchingClose(variableName, parenOpen) : -1;
             if (parenClose > parenOpen) {
                 const inner = variableName.substring(parenOpen + 1, parenClose);
                 element = this._evalArrayIndex(inner, variableName.substring(0, parenOpen));
