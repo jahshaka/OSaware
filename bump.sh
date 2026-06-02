@@ -28,4 +28,12 @@ fi
 sed -i '' "s/$OLD/$NEW/g" index.html core/drivers/terminal.js
 echo "$NEW" > VERSION
 
+# Regenerate files/INDEX — manifest of disk-loadable program names
+# (one bare name per line, no .bas extension). VFS loadFromFilesDir
+# uses this to skip network fetches for unknown program names, so
+# the browser doesn't 404 on RUN <typo>.
+if [ -d files ]; then
+  ls files/*.bas 2>/dev/null | xargs -n1 basename | sed 's/\.bas$//' | sort > files/INDEX
+fi
+
 echo "Build bumped: $OLD → $NEW"

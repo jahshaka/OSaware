@@ -6471,21 +6471,62 @@ class VirtualFs {
     async loadFromFilesDir(filename) {
         // CORS blocks file:// fetches — return not-found immediately
         if (typeof location !== 'undefined' && location.protocol === 'file:') return -1;
-        const url = `./files/${encodeURIComponent(filename)}?_=${Date.now()}`;
-        try {
-            const _ctrl = new AbortController();
-            const _tid  = setTimeout(() => _ctrl.abort(), 8000);
-            let resp;
-            try { resp = await fetch(url, { signal: _ctrl.signal }); }
-            finally { clearTimeout(_tid); }
-
-            if (!resp.ok) return -1;
-            const text = await resp.text();
-            return text ? this._parseFileText(text) : -1;
-        } catch (e) {
-            console.error('loadFromFilesDir fetch failed:', e);
-            return -1;
+        // BELT: per-session manifest from ./files/INDEX (one bare program
+        // name per line, no .bas extension). When a name isn't in the
+        // manifest we return -1 without a network request, so the browser
+        // never logs a 404 for unknown program names. SUSPENDERS: bump.sh
+        // auto-regenerates INDEX, so developer-added files stay covered;
+        // if the manifest fetch itself fails or INDEX is empty, the gate
+        // is bypassed and we fall through to the legacy fetch path (with
+        // a per-name miss cache so each name 404s at most once).
+        if (!this._indexLoaded) {
+            this._indexLoaded = true;
+            this._index = new Set();
+            try {
+                const r = await fetch(`./files/INDEX?_=${Date.now()}`);
+                if (r.ok) {
+                    const txt = await r.text();
+                    for (const line of txt.split('\n')) {
+                        const n = line.trim();
+                        if (n) this._index.add(n.toUpperCase());
+                    }
+                }
+            } catch (e) { /* manifest fetch failed — fall through to legacy fetch path */ }
         }
+        const upper = filename.toUpperCase();
+        const stem  = upper.replace(/\.BAS$/, '');
+        // Manifest gate — when present and populated, names NOT in it skip
+        // the network entirely. Stale-INDEX risk: an admin who drops a
+        // new .bas on the server without regenerating INDEX needs to
+        // either re-run bump.sh or regenerate INDEX manually. Documented
+        // in the deploy runbook.
+        if (this._index && this._index.size > 0 && !this._index.has(stem)) return -1;
+        // Per-session miss cache — only relevant when the manifest is
+        // absent/empty (the fallback path); ensures each unknown name
+        // produces at most one 404 across a session.
+        if (!this._missCache) this._missCache = new Set();
+        if (this._missCache.has(filename)) return -1;
+        const tryFetch = async (name) => {
+            const url = `./files/${encodeURIComponent(name)}?_=${Date.now()}`;
+            try {
+                const _ctrl = new AbortController();
+                const _tid  = setTimeout(() => _ctrl.abort(), 8000);
+                let resp;
+                try { resp = await fetch(url, { signal: _ctrl.signal }); }
+                finally { clearTimeout(_tid); }
+                if (!resp.ok) return -1;
+                const text = await resp.text();
+                return text ? this._parseFileText(text) : -1;
+            } catch (e) {
+                return -1;
+            }
+        };
+        let result = await tryFetch(filename);
+        if (result === -1 && !/\.bas$/i.test(filename)) {
+            result = await tryFetch(filename + '.bas');
+        }
+        if (result === -1) this._missCache.add(filename);
+        return result;
     }
 
     // -----------------------------------------------------------------------
