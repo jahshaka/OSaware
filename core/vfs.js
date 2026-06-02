@@ -5310,6 +5310,7 @@ class VirtualFs {
                 [330, 'MZ=16 : CELL=40.0 : SPEED=0.6 : TSPD=0.015 : VMOVE=0.08'],
                 [340, 'CAMDIST=18 : CAMHT=7 : PLYMIN=3 : PLYMAX=680 : YAWOFF=90'],
                 [350, 'EBACK=6.0 : ESIDE=3.53'],
+                [355, 'FOGON=1 : WIREMODE=0 : GRIDMODE=1'],
                 [360, 'TURNCHASE=0.12 : MAXPITCH=20*PI/180 : PITCHSMOOTH=0.07 : SNAP=0.2'],
                 [370, 'MAXROLL=30*PI/180 : ROLLSMOOTH=0.07 : BIAS=0.5 : ACCEL=0.03'],
                 [380, 'MAXPDOWN=30*PI/180 : MAXDCYAW=0.018 : MAXCLIMB=40*PI/180'],
@@ -5332,7 +5333,7 @@ class VirtualFs {
                 [580, 'DIM CUBEID(1) : DIM EXHID(1) : DIM EXH2(1) : DIM EXLID(1) : DIM EXRID(1)'],
                 [585, 'DIM OLDMC(1) : DIM OLDMR(1) : DIM TF(1)'],
                 [587, 'DIM LASTFIRE(1) : DIM BNEXT(1) : DIM TKILLS(1)'],
-                [590, 'DIM REC$(999)'],
+                [590, 'DIM REC$(499)'],
                 [600, 'REM === World state ==='],
                 [610, 'DIM BUL(39,9) : DIM OWNER(39) : DIM BLAST(15,4) : DIM TANK(19,5) : DIM FPOOL(7,1)'],
                 [700, 'REM === Per-player init: P=0 is human, P=1 is AI ==='],
@@ -5376,18 +5377,24 @@ class VirtualFs {
                 [970, 'REM --- Ground probe at P0 spawn for initial PGROUND ---'],
                 [972, 'GL.PROBE PX(0), PZ(0) : PGROUND=GL.PROBEY'],
                 [974, 'IF PLY(0)<PGROUND+60 THEN PLY(0)=PGROUND+60'],
+                [976, 'IF NPLAYERS>1 THEN GL.PROBE PX(1), PZ(1) : PG1=GL.PROBEY : IF PLY(1)<PG1+60 THEN PLY(1)=PG1+60'],
                 [980, 'IF BLOOMON=1 THEN GL.BLOOM 0.6'],
                 [990, 'GL.RFPS 1 : GL.AA 1 : GL.SKY 1'],
-                [995, 'CAMP=0 : EXNEXT=0 : EXNEXT_R=0 : FRON=0 : RECIDX=0 : FRTICK=0'],
+                [995, 'CAMP=0 : EXNEXT=0 : EXNEXT_R=0 : FRON=0 : RECIDX=0 : FRTICK=0 : CAMTRACK=1 : CAMYAW=CUBEYAW(0) : STARTTIME=TIMER : DEBUGON=0 : LASTDBG=0 : CLOFF=0 : HARDBAND=0'],
                 [996, 'GOSUB DoInitTanks'],
                 [997, 'GOSUB DoInitMinimap'],
                 [998, 'GOSUB DoInitBullets'],
                 [999, 'GOSUB DoInitBlasts'],
                 [1000, 'MainLoop:'],
                 [1010, 'K=INKEY'],
-                [1020, 'IF K=81 OR K=113 OR K=27 THEN GOTO Quit'],
-                [1022, 'IF K=65 OR K=97 THEN PHUMAN(0)=1-PHUMAN(0)'],
-                [1024, 'IF K=67 OR K=99 THEN PHUMAN(CAMP)=0 : CAMP=(CAMP+1) MOD NPLAYERS'],
+                [1020, 'IF K=81 OR K=113 OR K=27 THEN GOTO GameOver'],
+                [1022, 'IF K=65 OR K=97 THEN PHUMAN(CAMP)=1-PHUMAN(CAMP)'],
+                [1024, 'IF (K=67 OR K=99) AND MODE=2 THEN CAMP=1-CAMP : PHUMAN(0)=1-CAMP'],
+                [1031, 'IF K=88 OR K=120 THEN CAMTRACK=1-CAMTRACK'],
+                [1033, 'IF K=70 OR K=102 THEN FOGON=1-FOGON : IF FOGON=1 THEN GL.FOG 185,192,205,250,1200 ELSE GL.FOGOFF'],
+                [1037, 'IF K=84 OR K=116 THEN GRIDMODE=1-GRIDMODE : IF GRIDMODE=1 THEN GL.TERRAIN 1,2560,120,100,24,320,320,1 ELSE GL.TERRAIN 1,2560,120,100,24,320,320,0'],
+                [1039, 'IF K=90 OR K=122 THEN WIREMODE=1-WIREMODE : GL.WIREALL WIREMODE'],
+                [1041, 'IF K=68 OR K=100 THEN DEBUGON=1-DEBUGON'],
                 [1026, 'IF K=82 OR K=114 THEN FRON=1-FRON'],
                 [1030, 'NOW=TIMER : DT=(NOW-LASTT)/16 : DT=(4+DT-ABS(4-DT))/2 : LASTT=NOW'],
                 [1035, 'GL.PROBE PX(0), PZ(0) : PGROUND=GL.PROBEY'],
@@ -5411,24 +5418,33 @@ class VirtualFs {
                 [1170, 'NEXT P'],
                 [1180, 'REM --- Camera follows CAMP (C key swaps) ---'],
                 [1190, 'GL.LIGHTSOFF'],
-                [1200, 'AY=CUBEYAW(CAMP)'],
+                [1197, 'CAMDIFF=CUBEYAW(CAMP)-CAMYAW : CAMDIFF=CAMDIFF-2*PI*INT((CAMDIFF+PI)/(2*PI))'],
+                [1198, 'IF CAMTRACK=1 THEN CAMYAW=CAMYAW+CAMDIFF*0.25*DT'],
+                [1200, 'AY=CAMYAW'],
                 [1202, 'CAMX=PX(CAMP)+COS(AY)*CAMDIST : CAMY=PLY(CAMP)+CAMHT : CAMZ=PZ(CAMP)+SIN(AY)*CAMDIST'],
                 [1204, 'GL.PROBE CAMX, CAMZ : CGH=GL.PROBEY'],
-                [1206, 'IF CAMY<CGH+5 THEN CAMY=CGH+5'],
+                [1206, 'IF CAMY<CGH+15 THEN CAMY=CGH+15'],
                 [1210, 'GL.CAMERA CAMX, CAMY, CAMZ'],
                 [1220, 'GL.LOOKAT PX(CAMP)-COS(AY)*8, PLY(CAMP)+SIN(PITCH(CAMP))*8, PZ(CAMP)-SIN(AY)*8'],
                 [1230, 'GL.CAMERAROLL 0'],
                 [1240, 'REM --- Draw frame ---'],
-                [1250, 'LOCATE 1,1 : PRINT "SKYFOXV3   A=autopilot   C=swap cam (cam: P";CAMP+1;")   Q=quit                "'],
-                [1255, 'LOCATE 2,1 : PRINT "P1 kills:";TKILLS(0);"   P2 kills:";TKILLS(1);"   of";NT;"                  "'],
-                [1260, 'LOCATE 3,1 : PRINT "P1  X:"; INT(PX(0)); " Z:"; INT(PZ(0)); " Y:"; INT(PLY(0)); " TGT:"; TARGETID(0); "  "'],
-                [1270, 'LOCATE 4,1 : PRINT "P2  X:"; INT(PX(1)); " Z:"; INT(PZ(1)); " Y:"; INT(PLY(1)); " TGT:"; TARGETID(1); "  "'],
+                [1250, 'CLKSTR$="OFF" : IF CAMTRACK=1 THEN CLKSTR$="ON " '],
+                [1251, 'FGSTR$="OFF" : IF FOGON=1 THEN FGSTR$="ON "'],
+                [1252, 'GDSTR$="OFF" : IF GRIDMODE=1 THEN GDSTR$="ON "'],
+                [1253, 'WRSTR$="OFF" : IF WIREMODE=1 THEN WRSTR$="ON "'],
+                [1254, 'LOCATE 1,1 : PRINT "V3 A=auto C=swap(P";CAMP+1;") X=lock(";CLKSTR$;") F=fog(";FGSTR$;") T=grid(";GDSTR$;") Z=wire(";WRSTR$;") D=dbg Q=quit "'],
+                [1255, 'IF NPLAYERS=2 THEN LOCATE 2,1 : PRINT "P1 kills:";TKILLS(0);"   P2 kills:";TKILLS(1);"   of";NT;"                  "'],
+                [1256, 'IF NPLAYERS=1 THEN LOCATE 2,1 : PRINT "Kills:";TKILLS(0);"   of";NT;"                                       "'],
+                [1258, 'IF LASTDBG=1 AND DEBUGON=0 THEN LOCATE 3,1 : PRINT "                                                                  " : LOCATE 4,1 : PRINT "                                                                  " : LOCATE 5,1 : PRINT "                                                                  " : LOCATE 6,1 : PRINT "                                                                  "'],
+                [1259, 'LASTDBG=DEBUGON'],
+                [1260, 'IF DEBUGON=1 THEN LOCATE 3,1 : PRINT "P1  X:"; INT(PX(0)); " Z:"; INT(PZ(0)); " Y:"; INT(PLY(0)); " TGT:"; TARGETID(0); "  "'],
+                [1270, 'IF DEBUGON=1 THEN LOCATE 4,1 : PRINT "P2  X:"; INT(PX(1)); " Z:"; INT(PZ(1)); " Y:"; INT(PLY(1)); " TGT:"; TARGETID(1); "  "'],
                 [1271, 'DBP=CAMP : DTID=TARGETID(DBP)'],
-                [1272, 'IF DTID>=0 THEN DTX=TANK(DTID,1)-PX(DBP) : DTZ=TANK(DTID,3)-PZ(DBP) : DBR=ATN(DTZ/(DTX+0.0001)) : IF DTX<0 THEN DBR=DBR+PI'],
-                [1273, 'IF DTID>=0 THEN DBR=DBR-2*PI*INT((DBR+PI)/(2*PI)) : DGAP=PYAW(DBP)-CUBEYAW(DBP) : DGAP=DGAP-2*PI*INT((DGAP+PI)/(2*PI))'],
-                [1274, 'IF DTID>=0 THEN LOCATE 5,1 : PRINT "P";DBP+1;" T=";DTID;" DH=";INT(SQR(DTX*DTX+DTZ*DTZ));" CY=";INT(CUBEYAW(DBP)*180/PI);" PY=";INT(PYAW(DBP)*180/PI);" GAP=";INT(DGAP*180/PI);" SH=";SHOTS(DBP);" K=";TKILLS(DBP);"   "'],
-                [1262, 'IF DTID<0 THEN LOCATE 5,1 : PRINT "P";DBP+1;" no target                                          "'],
-                [1264, 'IF DTID>=0 THEN LOCATE 6,1 : PRINT "BR=";INT(DBR*180/PI);" BIAS=";INT(BIASLP(DBP)*100)/100;" SPD=";INT(SPDCUR(DBP)*100)/100;" EB=";INT(EBOOST(DBP)*100)/100;" CFR=";CLOSEFR(DBP);" OVF=";OVERFL(DBP);"           "'],
+                [1272, 'IF DTID>=0 AND DEBUGON=1 THEN DTX=TANK(DTID,1)-PX(DBP) : DTZ=TANK(DTID,3)-PZ(DBP) : DBR=ATN(DTZ/(DTX+0.0001)) : IF DTX<0 THEN DBR=DBR+PI'],
+                [1273, 'IF DTID>=0 AND DEBUGON=1 THEN DBR=DBR-2*PI*INT((DBR+PI)/(2*PI)) : DGAP=PYAW(DBP)-CUBEYAW(DBP) : DGAP=DGAP-2*PI*INT((DGAP+PI)/(2*PI))'],
+                [1274, 'IF DTID>=0 AND DEBUGON=1 THEN LOCATE 5,1 : PRINT "P";DBP+1;" T=";DTID;" DH=";INT(SQR(DTX*DTX+DTZ*DTZ));" CY=";INT(CUBEYAW(DBP)*180/PI);" PY=";INT(PYAW(DBP)*180/PI);" GAP=";INT(DGAP*180/PI);" SH=";SHOTS(DBP);" K=";TKILLS(DBP);"   "'],
+                [1262, 'IF DTID<0 AND DEBUGON=1 THEN LOCATE 5,1 : PRINT "P";DBP+1;" no target                                          "'],
+                [1264, 'IF DTID>=0 AND DEBUGON=1 THEN LOCATE 6,1 : PRINT "BR=";INT(DBR*180/PI);" BIAS=";INT(BIASLP(DBP)*100)/100;" SPD=";INT(SPDCUR(DBP)*100)/100;" EB=";INT(EBOOST(DBP)*100)/100;" CFR=";CLOSEFR(DBP);" OVF=";OVERFL(DBP);"           "'],
                 [1275, 'GOSUB DoDrawMinimap'],
                 [1276, 'FOR P=0 TO NPLAYERS-1'],
                 [1277, '   GOSUB DoParticleStep'],
@@ -5437,8 +5453,33 @@ class VirtualFs {
                 [1280, 'GL.CLS 10,14,38 : GL.DRAWALL'],
                 [1281, 'IF FRON=1 THEN FRTICK=FRTICK+1'],
                 [1282, 'IF FRON=1 AND FRTICK>=6 THEN FRTICK=0 : GOSUB DoFRLog'],
+                [1284, 'ALIVECNT=0'],
+                [1285, 'FOR T=0 TO NT-1'],
+                [1286, '   ALIVECNT=ALIVECNT+TANK(T,0)'],
+                [1287, 'NEXT T'],
+                [1288, 'IF ALIVECNT=0 THEN GOTO GameOver'],
                 [1290, 'SLEEP 16'],
                 [1300, 'GOTO MainLoop'],
+                [8500, 'GameOver:'],
+                [8510, 'UI ON : CLS'],
+                [8515, 'GL.LIGHTSOFF'],
+                [8520, 'ELAPSED=INT((TIMER-STARTTIME)/1000)'],
+                [8530, 'COLOUR 3 : PRINT "  G A M E   O V E R"'],
+                [8540, 'COLOUR 7 : PRINT ""'],
+                [8545, 'IF ALIVECNT=0 THEN COLOUR 11 : PRINT "  All ";NT;" tanks destroyed!" : COLOUR 7 : PRINT ""'],
+                [8550, 'COLOUR 11 : PRINT "  Stats:" : COLOUR 7'],
+                [8552, 'PRINT "    Time:     ";ELAPSED;" sec"'],
+                [8554, 'IF NPLAYERS=1 THEN PRINT "    Kills:    ";TKILLS(0);" of ";NT'],
+                [8556, 'IF NPLAYERS=2 THEN PRINT "    P1 kills: ";TKILLS(0);" of ";NT'],
+                [8558, 'IF NPLAYERS=2 THEN PRINT "    P2 kills: ";TKILLS(1);" of ";NT'],
+                [8560, 'IF NPLAYERS=2 THEN PRINT "    Total:    ";TKILLS(0)+TKILLS(1);" of ";NT'],
+                [8580, 'PRINT ""'],
+                [8585, 'IF FRON=1 THEN GOSUB DoFRDump'],
+                [8590, 'PRINT "  Press any key for menu..."'],
+                [8597, 'BUFKEY=INKEY'],
+                [8600, 'GOKEY=INKEY'],
+                [8605, 'IF GOKEY<=0 THEN SLEEP 32 : GOTO 8600'],
+                [8610, 'GOTO StartMenu'],
                 [9000, 'Quit:'],
                 [9010, 'UI ON : CLS'],
                 [9012, 'IF FRON=1 THEN GOSUB DoFRDump'],
@@ -5453,10 +5494,18 @@ class VirtualFs {
                 [10050, 'MX=MOUSE(1) : DMX=MX-LASTMX : LASTMX=MX'],
                 [10060, 'MY=MOUSE(2) : DMY=MY-LASTMY : LASTMY=MY'],
                 [10070, 'BTN=MOUSE(0) : SHFT=KEYDOWN(13)'],
-                [10080, 'IF BTN<0 AND LBTN>=0 THEN DOWNMX=MX : DOWNMY=MY'],
+                [10080, 'IF BTN<0 AND LBTN>=0 THEN DOWNMX=MX : DOWNMY=MY : CLOFF=0'],
                 [10090, 'OFFX=MX-DOWNMX : OFFY=MY-DOWNMY'],
-                [10100, 'IF SHFT=0 AND BTN<0 AND ABS(OFFX)>=BIAS*ABS(OFFY) THEN PYAW(P)=CUBEYAW(P)+OFFX*TSPD : PROLL(P)=0-OFFX*TSPD'],
-                [10110, 'IF SHFT=0 AND BTN<0 AND ABS(OFFY)>=BIAS*ABS(OFFX) THEN PPITCH(P)=0-OFFY*TSPD'],
+                [10093, 'ABSOFX=ABS(OFFX) : OSIGN=1 : IF OFFX<0 THEN OSIGN=0-1'],
+                [10094, 'CLTGT=OSIGN*(ABSOFX*0.005+ABSOFX*ABSOFX*0.00003) : IF BTN=0 THEN CLTGT=0'],
+                [10095, 'IF CLTGT<0-1.55 THEN CLTGT=0-1.55'],
+                [10096, 'IF CLTGT>1.55 THEN CLTGT=1.55'],
+                [10097, 'CLDIFF=CLTGT-CLOFF : IF CLDIFF>0.04 THEN CLDIFF=0.04'],
+                [10098, 'IF CLDIFF<0-0.04 THEN CLDIFF=0-0.04'],
+                [10099, 'CLOFF=CLOFF+CLDIFF : HARDBAND=(ABSOFX-100)*0.01 : IF HARDBAND<0 THEN HARDBAND=0'],
+                [10101, 'IF HARDBAND>1 THEN HARDBAND=1'],
+                [10100, 'IF SHFT=0 AND BTN<>0 AND ABS(OFFX)>=BIAS*ABS(OFFY) THEN PYAW(P)=CUBEYAW(P)+CLOFF : PROLL(P)=0-CLOFF'],
+                [10110, 'IF SHFT=0 AND BTN<>0 AND ABS(OFFY)>=BIAS*ABS(OFFX) THEN PPITCH(P)=0-OFFY*TSPD'],
                 [10120, 'SPDMAX=SPEED*4 : THRUST=0'],
                 [10130, 'IF KEYDOWN(16) THEN THRUST=1'],
                 [10140, 'ACCRATE=0.030'],
@@ -5467,13 +5516,13 @@ class VirtualFs {
                 [10190, 'IF THRUST=0 THEN SPDCUR(P)=SPDCUR(P)-0.018*DT'],
                 [10200, 'IF SPDCUR(P)>SPDMAX THEN SPDCUR(P)=SPDMAX'],
                 [10210, 'IF SPDCUR(P)<SPEED THEN SPDCUR(P)=SPEED'],
-                [10220, 'IF SHFT=1 AND BTN<0 AND ABS(DMY)>5 AND ABS(DMY)<200 AND ABS(DMY)>=BIAS*ABS(DMX) THEN PLY(P)=PLY(P)-DMY*VMOVE*(1+ABS(DMY)*ACCEL)'],
+                [10220, 'IF SHFT=1 AND BTN<>0 AND ABS(DMY)>5 AND ABS(DMY)<200 AND ABS(DMY)>=BIAS*ABS(DMX) THEN PLY(P)=PLY(P)-DMY*VMOVE*(1+ABS(DMY)*ACCEL)'],
                 [10230, 'LBTN=BTN'],
-                [10240, 'IF BTN>=0 THEN PYAW(P)=CUBEYAW(P)'],
+                [10240, 'IF BTN=0 THEN PYAW(P)=CUBEYAW(P)'],
                 [10250, 'PYGAP=PYAW(P)-CUBEYAW(P) : PYGAP=PYGAP-2*PI*INT((PYGAP+PI)/(2*PI))'],
-                [10260, 'IF PYGAP>0.785 THEN PYAW(P)=CUBEYAW(P)+0.785'],
-                [10270, 'IF PYGAP<0-0.785 THEN PYAW(P)=CUBEYAW(P)-0.785'],
-                [10280, 'IF BTN>=0 OR SHFT=1 THEN PPITCH(P)=PPITCH(P)+(0-PPITCH(P))*SNAP*DT : PROLL(P)=PROLL(P)+(0-PROLL(P))*SNAP*DT'],
+                [10260, 'IF PYGAP>1.55 THEN PYAW(P)=CUBEYAW(P)+1.55'],
+                [10270, 'IF PYGAP<0-1.55 THEN PYAW(P)=CUBEYAW(P)-1.55'],
+                [10280, 'IF BTN=0 OR SHFT=1 THEN PPITCH(P)=PPITCH(P)+(0-PPITCH(P))*SNAP*DT : PROLL(P)=PROLL(P)+(0-PROLL(P))*SNAP*DT'],
                 [10290, 'PPITCH(P)=(ABS(PPITCH(P)+MAXPDOWN)-ABS(PPITCH(P)-MAXCLIMB)+MAXCLIMB-MAXPDOWN)/2'],
                 [10295, 'IF KEYDOWN(32) AND TIMER-LASTFIRE(P)>=150 THEN GOSUB DoFire'],
                 [10300, 'RETURN'],
@@ -5591,11 +5640,13 @@ class VirtualFs {
                 [12030, 'DoPhysicsStep:'],
                 [12040, 'GAP=PYAW(P)-CUBEYAW(P) : GAP=GAP-2*PI*INT((GAP+PI)/(2*PI))'],
                 [12045, 'PROLL(P)=PROLL(P)-GAP*0.3'],
-                [12050, 'DCYAW=GAP*TURNCHASE*DT : DCYAW=(ABS(DCYAW+MAXDCYAW)-ABS(DCYAW-MAXDCYAW))/2'],
+                [12048, 'MDCYAW=MAXDCYAW : IF PHUMAN(P)=1 THEN MDCYAW=MAXDCYAW*3'],
+                [12050, 'DCYAW=GAP*TURNCHASE*DT : DCYAW=(ABS(DCYAW+MDCYAW)-ABS(DCYAW-MDCYAW))/2'],
                 [12060, 'DCYAWLP(P)=DCYAWLP(P)+(DCYAW-DCYAWLP(P))*0.25*DT'],
                 [12070, 'CUBEYAW(P)=CUBEYAW(P)+DCYAWLP(P) : CUBEYAW(P)=CUBEYAW(P)-2*PI*INT((CUBEYAW(P)+PI)/(2*PI))'],
                 [12080, 'PITCH(P)=PITCH(P)+(PPITCH(P)-PITCH(P))*PITCHSMOOTH*DT'],
-                [12090, 'PROLL(P)=(ABS(PROLL(P)+MAXROLL)-ABS(PROLL(P)-MAXROLL))/2'],
+                [12088, 'MROLL=MAXROLL : IF PHUMAN(P)=1 THEN MROLL=MAXROLL*(1+HARDBAND)'],
+                [12090, 'PROLL(P)=(ABS(PROLL(P)+MROLL)-ABS(PROLL(P)-MROLL))/2'],
                 [12100, 'ROLL(P)=ROLL(P)+(PROLL(P)-ROLL(P))*ROLLSMOOTH*DT'],
                 [12110, 'CP=COS(PITCH(P))'],
                 [12120, 'PX(P)=PX(P)-COS(CUBEYAW(P))*CP*SPDCUR(P)*EBOOST(P)*DT'],
@@ -5702,7 +5753,7 @@ class VirtualFs {
                 [12554, 'RX = 0 - SIN(CUBEYAW(P))'],
                 [12555, 'RZ = COS(CUBEYAW(P))'],
                 [12556, 'RYDEG = 0 - CUBEYAW(P) * 180 / PI + YAWOFF'],
-                [12557, 'RXDEG = 0 - PITCH(P) * 180 / PI'],
+                [12557, 'RXDEG = PITCH(P) * 180 / PI'],
                 [12560, 'FOR S2=0 TO 1'],
                 [12562, '   SD = S2 * 2 - 1'],
                 [12564, '   SL = P * 20 + BNEXT(P)'],
@@ -5960,19 +6011,22 @@ class VirtualFs {
                 [14756, 'IF FRTID>=0 THEN FRBR=FRBR-2*PI*INT((FRBR+PI)/(2*PI))'],
                 [14757, 'IF FRTID>=0 AND FRDH>0 THEN FRDOT=(COS(CUBEYAW(CAMP))*FRDX+SIN(CUBEYAW(CAMP))*FRDZ)/FRDH'],
                 [14758, 'FGAP=PYAW(CAMP)-CUBEYAW(CAMP) : FGAP=FGAP-2*PI*INT((FGAP+PI)/(2*PI))'],
-                [14760, 'FRMSG$=" t="+STR$(INT(TIMER/100))+" T="+STR$(FRTID)+" DH="+STR$(FRDH)+" CY="+STR$(INT(CUBEYAW(CAMP)*180/PI))+" BR="+STR$(INT(FRBR*180/PI))+" GAP="+STR$(INT(FGAP*180/PI))+" PIT="+STR$(INT(PITCH(CAMP)*180/PI))+" PPT="+STR$(INT(PPITCH(CAMP)*180/PI))+" CLR="+STR$(CLOSEFR(CAMP))+" OV="+STR$(OVERFL(CAMP))+" CH="+STR$(CLIMBHOLD(CAMP))+" X="+STR$(INT(PX(CAMP)))+" Y="+STR$(INT(PLY(CAMP)))+" Z="+STR$(INT(PZ(CAMP)))+" TX="+STR$(INT(FRTX))+" TZ="+STR$(INT(FRTZ))'],
-                [14762, 'REC$(RECIDX)=FRMSG$'],
+                [14759, 'DCY=CUBEYAW(CAMP)-LASTCY : DCY=DCY-2*PI*INT((DCY+PI)/(2*PI)) : DCY=INT(DCY*180/PI)'],
+                [14760, 'DPY=PYAW(CAMP)-LASTPY : DPY=DPY-2*PI*INT((DPY+PI)/(2*PI)) : DPY=INT(DPY*180/PI)'],
+                [14761, 'DRL=INT((ROLL(CAMP)-LASTRL)*180/PI) : LASTCY=CUBEYAW(CAMP) : LASTPY=PYAW(CAMP) : LASTRL=ROLL(CAMP)'],
+                [14762, 'FRMSG$=" t="+STR$(INT(TIMER/100))+" CY="+STR$(INT(CUBEYAW(CAMP)*180/PI))+" dCY="+STR$(DCY)+" PY="+STR$(INT(PYAW(CAMP)*180/PI))+" dPY="+STR$(DPY)+" GAP="+STR$(INT(FGAP*180/PI))+" RL="+STR$(INT(ROLL(CAMP)*180/PI))+" dRL="+STR$(DRL)+" PR="+STR$(INT(PROLL(CAMP)*180/PI))+" OFX="+STR$(INT(OFFX))+" OFY="+STR$(INT(OFFY))+" DMX="+STR$(INT(DMX))+" DMY="+STR$(INT(DMY))+" BTN="+STR$(INT(BTN))+" SHF="+STR$(INT(SHFT))+" CLF="+STR$(INT(CLOFF*100))+" HB="+STR$(HARDBAND)'],
+                [14763, 'REC$(RECIDX)=FRMSG$'],
                 [14764, 'RECIDX=RECIDX+1'],
-                [14766, 'IF RECIDX>=1000 THEN RECIDX=0'],
+                [14766, 'IF RECIDX>=500 THEN RECIDX=0'],
                 [14770, 'RETURN'],
                 [14800, 'REM ============================================================'],
                 [14810, 'REM DoFRDump - print last 200 FR entries in time order'],
                 [14820, 'REM ============================================================'],
                 [14830, 'DoFRDump:'],
-                [14840, 'COLOUR 11 : PRINT "  --- FLIGHT RECORDER (last 1000 entries) ---" : COLOUR 7'],
-                [14850, 'FOR FRI=0 TO 999'],
+                [14840, 'COLOUR 11 : PRINT "  --- FLIGHT RECORDER (last 500 entries) ---" : COLOUR 7'],
+                [14850, 'FOR FRI=0 TO 499'],
                 [14860, '   FRJ=RECIDX+FRI'],
-                [14870, '   IF FRJ>=1000 THEN FRJ=FRJ-1000'],
+                [14870, '   IF FRJ>=500 THEN FRJ=FRJ-500'],
                 [14880, '   IF REC$(FRJ)<>"" THEN PRINT "  ";REC$(FRJ)'],
                 [14890, 'NEXT FRI'],
                 [14900, 'PRINT ""'],
@@ -7525,6 +7579,31 @@ class VirtualFs {
     // than crashing the terminal. Returns the line array even if some entries
     // were bad — the caller (and the BASIC program) will see whatever lines
     // did parse correctly.
+    _reportDuplicateLines(arr, progName, interpreter) {
+        if (!arr || !arr._duplicates || arr._duplicates.length === 0) return;
+        if (!interpreter || typeof interpreter.appendLine !== 'function') return;
+        const dups = arr._duplicates;
+        interpreter.appendLine(
+            'PROGRAM ERROR in "' + progName + '": ' +
+            dups.length + ' duplicate line number' + (dups.length === 1 ? '' : 's') +
+            ' (later entries silently overwrote earlier ones)', 1
+        );
+        // Cap the per-line dump at a reasonable number so a wholly broken
+        // program doesn't flood the terminal.
+        const cap = 12;
+        for (let i = 0; i < dups.length && i < cap; i++) {
+            const d = dups[i];
+            const prevSnip = String(d.prev || '').slice(0, 56);
+            const nextSnip = String(d.next || '').slice(0, 56);
+            interpreter.appendLine(
+                '  line ' + d.lineNo + ': "' + prevSnip + '" -> overwritten by -> "' + nextSnip + '"', 1
+            );
+        }
+        if (dups.length > cap) {
+            interpreter.appendLine('  ... and ' + (dups.length - cap) + ' more', 1);
+        }
+    }
+
     _buildLineArray(pairs) {
         const arr = new Array(MAX_LINES).fill('');
         if (!pairs || typeof pairs[Symbol.iterator] !== 'function') {
@@ -7533,6 +7612,12 @@ class VirtualFs {
         }
         let badCount = 0;
         let idx = -1;
+        // Track lines we've already seen so duplicates can be reported to the
+        // user (silent overwrite is a real footgun — same line number twice
+        // means the second silently wins). Stored as an array on the returned
+        // line-array so loadFile() / shell can pick it up and print it.
+        const seen = new Map();        // lineNo -> first text seen
+        const duplicates = [];          // [{ lineNo, prev, next }]
         for (const item of pairs) {
             idx++;
             if (item === undefined || item === null) {
@@ -7557,10 +7642,21 @@ class VirtualFs {
                 badCount++;
                 continue;
             }
+            if (seen.has(lineNo)) {
+                duplicates.push({ lineNo, prev: seen.get(lineNo), next: text });
+            }
+            seen.set(lineNo, text);
             arr[lineNo] = text;
         }
         if (badCount > 0) {
             console.warn('VFS: skipped ' + badCount + ' malformed entries when loading program');
+        }
+        if (duplicates.length > 0) {
+            // Attach as a non-enumerable-ish property so existing for/in loops
+            // and length-based iteration aren't disturbed.
+            Object.defineProperty(arr, '_duplicates', {
+                value: duplicates, enumerable: false, configurable: true
+            });
         }
         return arr;
     }
@@ -7663,7 +7759,9 @@ class VirtualFs {
         const progEntry = this._files.find(([k, v]) => k === stripped && Array.isArray(v));
         if (progEntry) {
             try {
-                return this._buildLineArray(progEntry[1]);
+                const arr = this._buildLineArray(progEntry[1]);
+                this._reportDuplicateLines(arr, stripped, interpreter);
+                return arr;
             } catch (e) {
                 console.error('VFS: failed to build line array for system program "' + stripped + '":', e);
                 interpreter.appendLine('VFS: program "' + stripped + '" is corrupted (see console)', 1);
@@ -7675,7 +7773,9 @@ class VirtualFs {
         const userEntry = this._userFiles.find(([name]) => name === stripped);
         if (userEntry) {
             try {
-                return this._buildLineArray(userEntry[1]);
+                const arr = this._buildLineArray(userEntry[1]);
+                this._reportDuplicateLines(arr, stripped, interpreter);
+                return arr;
             } catch (e) {
                 console.error('VFS: failed to build line array for user program "' + stripped + '":', e);
                 interpreter.appendLine('VFS: program "' + stripped + '" is corrupted (see console)', 1);

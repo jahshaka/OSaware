@@ -2471,16 +2471,20 @@ void main() {
         const fg = g.fog;
         const fogColor = fg ? new THREE.Color(fg.r / 255, fg.g / 255, fg.b / 255)
                             : new THREE.Color(0.62, 0.66, 0.74);
+        const lightDir = g.light ? new THREE.Vector3(g.light[0], g.light[1], g.light[2]).normalize()
+                                 : new THREE.Vector3(0.4, 1, 0.3).normalize();
         const mat = new THREE.ShaderMaterial({
             uniforms: {
-                uLow:  { value: new THREE.Color(0.016, 0.024, 0.063) },
-                uHigh: { value: new THREE.Color(0.10, 0.32, 0.78) },
+                uLow:  { value: new THREE.Color(0.08, 0.12, 0.22) },
+                uHigh: { value: new THREE.Color(0.28, 0.55, 0.92) },
                 uWire: { value: new THREE.Color(0.35, 0.62, 1.0) },
                 uMaxH: { value: Math.max(1, height) },
                 uGrid:    { value: mode },
                 uFog:     { value: fogColor },
                 uFogNear: { value: fg ? fg.near : 300 },
-                uFogFar:  { value: fg ? fg.far  : 1600 }
+                uFogFar:  { value: fg ? fg.far  : 1600 },
+                uLightDir: { value: lightDir },
+                uAmbient:  { value: Math.max(0.0, Math.min(1.0, g.ambient)) }
             },
             vertexShader:   this._terrainVertSrc(),
             fragmentShader: this._terrainFragSrc(),
@@ -2509,11 +2513,14 @@ void main() {
         return `
 attribute vec3 center;
 varying vec3 vCenter;
+varying vec3 vWorldPos;
 varying float vH;
 varying float vDist;
 void main() {
   vCenter = center;
   vH = position.y;
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vDist = -mv.z;
   gl_Position = projectionMatrix * mv;
@@ -2523,6 +2530,7 @@ void main() {
     _terrainFragSrc() {
         return `
 varying vec3 vCenter;
+varying vec3 vWorldPos;
 varying float vH;
 varying float vDist;
 uniform vec3 uLow;
@@ -2533,16 +2541,29 @@ uniform vec3 uFog;
 uniform float uFogNear;
 uniform float uFogFar;
 uniform float uGrid;
+uniform vec3 uLightDir;
+uniform float uAmbient;
 float edgeFactor() {
-  vec3 d = fwidth(vCenter);
-  vec3 a3 = smoothstep(vec3(0.0), d * 1.3, vCenter);
+  // Clamp the derivative to a minimum so distant lines stay a stable thickness
+  // instead of going noisy/shimmery as the screen-space derivative collapses.
+  vec3 d = max(fwidth(vCenter), vec3(0.002));
+  vec3 a3 = smoothstep(vec3(0.0), d * 1.5, vCenter);
   return min(min(a3.x, a3.y), a3.z);
 }
 void main() {
   float h = clamp(vH / uMaxH, 0.0, 1.0);
   vec3 base = mix(uLow, uHigh, h);
+  // flat per-fragment normal from world-position derivatives (no normal attribute needed)
+  vec3 n = normalize(cross(dFdy(vWorldPos), dFdx(vWorldPos)));
+  float diff = max(dot(n, normalize(uLightDir)), 0.0);
+  float amb = min(uAmbient * 2.0, 1.0);
+  float lit = amb + (1.0 - amb) * diff;
+  base = base * lit;
   float e = edgeFactor();
-  vec3 col = mix(base, mix(uWire, base, e), uGrid);
+  // Fade the grid lines out with distance so far-away triangles don't shimmer.
+  float gridFade = 1.0 - smoothstep(400.0, 1100.0, vDist);
+  float effGrid = uGrid * gridFade;
+  vec3 col = mix(base, mix(uWire, base, e), effGrid);
   col = mix(col, uFog, smoothstep(uFogNear, uFogFar, vDist));
   gl_FragColor = vec4(col, 1.0);
 }`;
