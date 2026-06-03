@@ -7189,7 +7189,7 @@ class VirtualFs {
         interpreter.appendLine(' OSAWARE Virtual File System', 1);
         interpreter.appendLine(' ----------------------------', 1);
 
-        const GAMES = new Set(['MAZE3D','PACMAN','WUMPUS','ANIMAL','MMIND','TRON','SKYFOX']);
+        const GAMES = new Set(['MAZE3D','PACMAN','TRON','SKYFOX']);
         const DEMOS = new Set(['AIDEMO','MANDEL','BALLS','BLOB','GLDEMO','GL3D','GLSHADE','GLDEMOMAX','GLMODEL',
                                'PARTICLEDEMO','SGIDEMO','IMGDEMO','IMGTESTWEB','MOUSEDEMO','AUDIOTEST','CIRCLES',
                                'LINES','LINES2','STARS1','STARS2','FRAC','AASNOOPY','COL','PBRCUBE',
@@ -7198,7 +7198,8 @@ class VirtualFs {
                                'VFSTEST2','VFSTESTPROG','VFSAUTHTEST','VFSREALTEST','VFSPUTDBG','AUDIOTEST','PROFILER','TRONRIBBON']);
         const TOOLS = new Set(['SSH','TODO','LOGO','QUINE','LOGODEV','HUGO',
                                'MOUSE','VIEWER','SUBTEST','DATATEST']);
-        const SKIP  = new Set(['MENU']);
+        const MISC  = new Set(['WUMPUS','ANIMAL','MMIND']);
+        const SKIP  = new Set(['MENU', 'GAME']);
 
         // Programs only (array entries)
         const allNames = this._files
@@ -7209,7 +7210,8 @@ class VirtualFs {
         const demos = allNames.filter(n => DEMOS.has(n) && !TESTS.has(n));
         const tests = allNames.filter(n => TESTS.has(n));
         const tools = allNames.filter(n => TOOLS.has(n) && !TESTS.has(n) && !DEMOS.has(n));
-        const misc  = allNames.filter(n => !GAMES.has(n) && !DEMOS.has(n) && !TESTS.has(n) && !TOOLS.has(n));
+        const misc  = allNames.filter(n => MISC.has(n) ||
+                          (!GAMES.has(n) && !DEMOS.has(n) && !TESTS.has(n) && !TOOLS.has(n)));
 
         const printGroup = (label, names) => {
             if (!names.length) return;
@@ -7227,6 +7229,7 @@ class VirtualFs {
         printGroup('DEMOS', demos);
         printGroup('TESTS', tests);
         printGroup('TOOLS', tools);
+        printGroup('MISC',  misc);
 
         // Show folders (unique top-level directory names from asset paths).
         // Track all full paths so we can detect which folders have subfolders.

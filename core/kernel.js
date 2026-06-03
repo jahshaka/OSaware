@@ -4219,13 +4219,22 @@ class Interpreter {
     // parseCode  –  dispatch a cleaned BASIC statement to the right handler.
     // -----------------------------------------------------------------------
     parseCode(sWork) {
-        const upper3 = sWork.substring(0, 3).toUpperCase();
-        const upper4 = sWork.substring(0, 4).toUpperCase();
+        // OPT-PC: compute sUpper ONCE up-front and derive the three short
+        // prefixes from it. Saves three .toUpperCase() calls per statement.
+        const sUpper = sWork.toUpperCase();
+        const upper3 = sUpper.substring(0, 3);
+        const upper4 = sUpper.substring(0, 4);
 
         // Pure label definition e.g. "MainLoop:" — silently skip, no-op.
         // Exclude SWITCH keywords: DEFAULT: and CASE x:
-        const _sw = sWork.trim().toUpperCase();
-        if (!(_sw === 'DEFAULT:' || _sw.startsWith('CASE ')) && /^[A-Za-z][A-Za-z0-9.]{0,39}:$/.test(sWork.trim())) return CMD_OK;
+        // Only enter the regex branch when the line ends with ':'; this avoids
+        // the trim() + RegExp for every statement (the common case).
+        if (sWork.charCodeAt(sWork.length - 1) === 58) {  // ':'
+            const _swTrim = sWork.trim();
+            const _swU = _swTrim.toUpperCase();
+            if (!(_swU === 'DEFAULT:' || _swU.startsWith('CASE ')) &&
+                /^[A-Za-z][A-Za-z0-9.]{0,39}:$/.test(_swTrim)) return CMD_OK;
+        }
 
         // LET assignment
         if (upper3 === 'LET') {
@@ -4239,7 +4248,7 @@ class Interpreter {
         }
 
         // ELSE (block-IF) — flip skipping state.
-        if (upper4 === 'ELSE' || sWork.trim().toUpperCase() === 'ELSE') {
+        if (upper4 === 'ELSE' || sUpper === 'ELSE') {
             if (this._if_stack.length > 0) {
                 const frame = this._if_stack[this._if_stack.length - 1];
                 frame.skipping = frame.done;
@@ -4249,7 +4258,7 @@ class Interpreter {
 
         // RUN / LOAD / SAVE are handled separately because they may contain ':' in params.
         if (upper3 === 'RUN')  return this.cmdRUN(this.trim(sWork.substring(3)));
-        if (upper4 === 'LOAD' && sWork.substring(0, 7).toUpperCase() !== 'LOADIMG') {
+        if (upper4 === 'LOAD' && sUpper.substring(0, 7) !== 'LOADIMG') {
             let sParam = this.trim(sWork.substring(4));
             if (sParam.endsWith('$')) sParam = String(this.getValue(sParam, 0, sParam.length, ASS_STRING));
             this.cmdLOAD(sParam);
@@ -4257,19 +4266,28 @@ class Interpreter {
         }
         if (upper4 === 'SAVE') return this.cmdSAVE(this.trim(sWork.substring(4)));
 
-        // Fast O(1) command lookup via Map — try longest prefix first.
-        const sUpper = sWork.toUpperCase();
-        let entry = null;
-        for (let tryLen = Math.min(sWork.length, 24); tryLen >= 1; tryLen--) {
-            if (tryLen < sWork.length) {
-                const ch = sWork[tryLen];
-                // Valid keyword terminators: space, (, comma, end-of-string.
-                // Single-char keywords (like ?) match regardless of what follows.
-                if (tryLen > 1 && ch !== ' ' && ch !== '(' && ch !== ',') continue;
-            }
-            const found = this._cmdMap.get(sUpper.substring(0, tryLen));
-            if (found) { entry = found; break; }
+        // OPT-PC: linearise the keyword scan. The old loop went tryLen=24..1
+        // and re-checked terminators on every iteration. The new form walks
+        // forward ONCE: track each space (multi-word keywords like
+        // "EXIT SUB"/"ON ERROR" are space-separated) and the FIRST hard
+        // terminator (`(` or `,`). Try the longest candidate prefix first
+        // (the hard-terminator position), then walk back through space
+        // positions, then a single-char fallback for `?`-style keys.
+        const sLen = sWork.length;
+        const maxLen = sLen < 24 ? sLen : 24;
+        let hardEnd = maxLen;
+        const tryLens = [];
+        for (let i = 0; i < maxLen; i++) {
+            const ch = sWork[i];
+            if (ch === '(' || ch === ',') { hardEnd = i; break; }
+            if (ch === ' ') tryLens.push(i);
         }
+        let entry = hardEnd > 0 ? this._cmdMap.get(sUpper.substring(0, hardEnd)) : null;
+        for (let i = tryLens.length - 1; !entry && i >= 0; i--) {
+            const L = tryLens[i];
+            if (L > 0) entry = this._cmdMap.get(sUpper.substring(0, L));
+        }
+        if (!entry) entry = this._cmdMap.get(sUpper.charAt(0));
         if (entry) {
             const len          = entry[0].length;
             const selfHandling = entry[3];

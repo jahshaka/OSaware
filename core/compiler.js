@@ -53,6 +53,7 @@ class Compiler {
         this._oopObjects           = new Map(); // clear OOP instance store
         this._oopObjectsNext       = 1;
         this._exprCache            = new Map(); // expression parse tree cache
+        this._assignTypeCache      = new Map(); // OPT-AT: getAssignType memo
         // Note: variables_func is intentionally kept (DEF FN persists across RUN).
     }
 
@@ -115,8 +116,19 @@ class Compiler {
 
     // -----------------------------------------------------------------------
     // getAssignType  –  determine the storage type from the variable name.
+    //
+    // OPT-AT: memoise per name. Called from lookup_/assign_/parseAssign — for
+    // a hot loop reading the same identifier each tick the inputs are stable
+    // and the result never changes, so a Map gives O(1) instead of four
+    // string searches + two Set lookups + a substring + toUpperCase.
+    // Process-local: lives on the Interpreter instance, reset across loaders.
     // -----------------------------------------------------------------------
     getAssignType(variableName) {
+        let cache = this._assignTypeCache;
+        if (cache) {
+            const hit = cache.get(variableName);
+            if (hit !== undefined) return hit;
+        }
         const dollarPos  = variableName.indexOf('$');
         const parenOpen  = variableName.indexOf('(');
         const parenClose = variableName.lastIndexOf(')');
@@ -126,16 +138,23 @@ class Compiler {
         const isStrFunc = _STR_FUNCS.has(funcName);
         const isNumFunc = _NUM_FUNCS.has(funcName);
 
+        let result;
         // String variable or string-returning function
-        if (variableName.endsWith('$') || isStrFunc) return ASS_STRING;
-
+        if (variableName.endsWith('$') || isStrFunc) result = ASS_STRING;
         // Array of strings: name$(index)
-        if (dollarPos > 0 && parenOpen > dollarPos) return ASS_ARRAY_STRING;
-
+        else if (dollarPos > 0 && parenOpen > dollarPos) result = ASS_ARRAY_STRING;
         // Array of numbers: name(index)   (but not a known numeric function)
-        if (parenClose > parenOpen && !isNumFunc) return ASS_ARRAY_NUMBER;
+        else if (parenClose > parenOpen && !isNumFunc) result = ASS_ARRAY_NUMBER;
+        else result = ASS_NUMBER;
 
-        return ASS_NUMBER;
+        if (!cache) {
+            cache = new Map();
+            this._assignTypeCache = cache;
+        }
+        // Cap cache size to keep memory bounded; arrays like SHAPES(0)..(N)
+        // are different keys and could blow it up in tight loops.
+        if (cache.size < 4096) cache.set(variableName, result);
+        return result;
     }
 
     // -----------------------------------------------------------------------
