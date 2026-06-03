@@ -1283,14 +1283,19 @@ class Interpreter {
             const recvU = recv.toUpperCase();
             const isMe = (recvU === 'ME' || recvU === 'MYBASE');
             const simpleVar = /^[A-Za-z_][A-Za-z0-9_]*(\$)?$/.test(recv);
+            // Array-element receiver: IDENT(...) — evaluate it and treat as
+            // OOP if it lands on a live handle.
+            const arrayRecv = !simpleVar && /^[A-Za-z_][A-Za-z0-9_]*\(.*\)$/.test(recv);
             let isOop = isMe;
             if (!isOop && simpleVar) {
                 if (this._dimClass && this._dimClass[recv]) isOop = true;
                 else if (this._oopObjects) {
-                    // Maybe the var holds a live handle even without DIM..AS.
                     const v = this.variables_numbers && this.variables_numbers.get(recv);
                     if (v && this._oopObjects.has(Number(v))) isOop = true;
                 }
+            } else if (!isOop && arrayRecv && this._oopObjects) {
+                const h = Number(this.evalCalc(recv, ASS_NUMBER, 0)) || 0;
+                if (h && this._oopObjects.has(h)) isOop = true;
             }
             if (isOop) {
                 this.evalCalc(raw, ASS_NUMBER, 0);
