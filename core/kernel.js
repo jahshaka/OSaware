@@ -802,6 +802,10 @@ class Interpreter {
         const sortedLines = [...this.lines_assigned].sort((a, b) => a - b);
         for (let si = 0; si < sortedLines.length; si++) {
             const i     = sortedLines[si];
+            // Skip SUB/FUNCTION declarations that live inside a CLASS body —
+            // they are class methods, not top-level callable subroutines, and
+            // are tracked separately in this._classes.
+            if (this._classBodyLines && this._classBodyLines.has(i)) continue;
             const line  = (this.lines[i] || '').trim();
             const upper = line.toUpperCase();
             const isFunc = upper.startsWith('FUNCTION ');
@@ -830,6 +834,363 @@ class Interpreter {
     }
 
     cmdDECLARE(param) { return CMD_OK; }  // forward decl — no-op
+
+    // -----------------------------------------------------------------------
+    // OOP — class registry. Scanned at run() time alongside _scanSubs.
+    // See docs/OSaware BASIC OOP.pdf for the full feature spec.
+    //
+    //   _classes[NAME] = {
+    //     name, parent, fields, methods,
+    //     methodVtable, mybaseVtable,
+    //     startLine, endLine
+    //   }
+    //   _classBodyLines : Set<lineIdx>   — every line inside ANY class body.
+    //                                       _scanSubs uses this to skip
+    //                                       class-method declarations so
+    //                                       they don't pollute the global
+    //                                       SUB namespace.
+    // -----------------------------------------------------------------------
+    _scanClasses() {
+        this._classes = {};
+        this._classBodyLines = new Set();
+        const sortedLines = [...this.lines_assigned].sort((a, b) => a - b);
+        for (let si = 0; si < sortedLines.length; si++) {
+            const i     = sortedLines[si];
+            const raw   = (this.lines[i] || '').trim();
+            const upper = raw.toUpperCase();
+            if (!upper.startsWith('CLASS ') && upper !== 'CLASS') continue;
+            // Header: CLASS Name [INHERITS Parent]
+            let sig = raw.substring(5).trim();    // after "CLASS"
+            let name, parent = null;
+            const inhRe = /\s+INHERITS\s+/i;
+            const m = sig.match(inhRe);
+            if (m) {
+                const idx = sig.search(inhRe);
+                name   = sig.substring(0, idx).trim();
+                parent = sig.substring(idx + m[0].length).trim();
+            } else {
+                name = sig;
+            }
+            const fields   = [];
+            const methods  = [];
+            let endLine    = -1;
+            let cur        = null;   // currently-open method being walked
+            let ei         = si + 1;
+            while (ei < sortedLines.length) {
+                const j  = sortedLines[ei];
+                const jl = (this.lines[j] || '').trim();
+                const ju = jl.toUpperCase();
+                this._classBodyLines.add(j);
+                if (ju === 'END CLASS' || ju === 'ENDCLASS') { endLine = j; break; }
+                if (cur) {
+                    if (ju === 'END SUB' || ju === 'ENDSUB' ||
+                        ju === 'END FUNCTION' || ju === 'ENDFUNCTION') {
+                        cur.endLine = j;
+                        methods.push(cur);
+                        cur = null;
+                    }
+                } else {
+                    let body = jl, isPublic = true;
+                    const headM = jl.match(/^(PUBLIC|PRIVATE)\s+/i);
+                    if (headM) {
+                        isPublic = headM[1].toUpperCase() === 'PUBLIC';
+                        body = jl.substring(headM[0].length);
+                    } else {
+                        // Default: methods are PUBLIC, fields are PRIVATE.
+                        // We re-derive after parsing the body kind below.
+                    }
+                    const bodyU = body.toUpperCase();
+                    // Method modifiers
+                    let isOverridable = false, isOverrides = false;
+                    let mbody = body;
+                    if (bodyU.startsWith('OVERRIDABLE ')) {
+                        isOverridable = true;
+                        mbody = body.substring(12);
+                    } else if (bodyU.startsWith('OVERRIDES ')) {
+                        isOverrides = true;
+                        mbody = body.substring(10);
+                    }
+                    const mbodyU = mbody.toUpperCase();
+                    if (mbodyU.startsWith('SUB ') || mbodyU.startsWith('FUNCTION ')) {
+                        const isFunc = mbodyU.startsWith('FUNCTION ');
+                        const kw     = isFunc ? 'FUNCTION ' : 'SUB ';
+                        let msig     = mbody.substring(kw.length).trim();
+                        const po     = msig.indexOf('(');
+                        const mname  = po >= 0 ? msig.substring(0, po).trim() : msig.split(/\s+/)[0].trim();
+                        // Use matched-paren close so inline bodies like
+                        //   SUB Init (s, w) : CALL MYBASE.Init(s) : ...
+                        // don't have lastIndexOf(')') return the inner )s.
+                        let pclose = -1;
+                        if (po >= 0) {
+                            let depth = 0;
+                            for (let k = po; k < msig.length; k++) {
+                                const ch = msig[k];
+                                if (ch === '(') depth++;
+                                else if (ch === ')') { depth--; if (depth === 0) { pclose = k; break; } }
+                            }
+                        }
+                        const pstr   = (po >= 0 && pclose > po) ? msig.substring(po + 1, pclose) : '';
+                        const params = pstr ? pstr.split(',').map(p => p.trim()).filter(Boolean) : [];
+                        // Detect inline form:
+                        //   [PUBLIC] SUB Name (args) : stmt : ... : END SUB
+                        // by looking for ' END SUB' / ' END FUNCTION' (case-insensitive)
+                        // AFTER the closing paren of the signature in the SAME line.
+                        const endTok = isFunc ? 'END FUNCTION' : 'END SUB';
+                        const restAfterSig = (pclose > po) ? msig.substring(pclose + 1) : '';
+                        const restUp = restAfterSig.toUpperCase();
+                        const endIdx = restUp.lastIndexOf(endTok);
+                        let inlineBody = null;
+                        if (endIdx >= 0) {
+                            // Inline definition: extract the body text between the
+                            // first colon and the colon preceding END SUB.
+                            let body = restAfterSig.substring(0, endIdx).trim();
+                            // Strip the leading ':' that joined the header and body,
+                            // and the trailing ':' that joined body and END SUB.
+                            if (body.startsWith(':')) body = body.substring(1).trim();
+                            if (body.endsWith(':'))   body = body.substring(0, body.length - 1).trim();
+                            inlineBody = body;
+                        }
+                        cur = { name: mname, params, startLine: j, endLine: -1,
+                                isFunc, isOverridable, isOverrides,
+                                isPublic: headM ? isPublic : true,
+                                inlineBody };
+                        if (inlineBody !== null) {
+                            cur.endLine = j;
+                            methods.push(cur);
+                            cur = null;
+                        }
+                    } else if (/^[A-Z_]/i.test(body)) {
+                        // Field declaration:  [PUBLIC|PRIVATE] NAME [, NAME [, ...]]
+                        // Default visibility for fields is PRIVATE.
+                        const visForFields = headM ? isPublic : false;
+                        const names = body.split(',').map(s => s.trim()).filter(Boolean);
+                        for (const fn of names) {
+                            // Strip any AS-clause leftovers; fields are bare ident or ident$
+                            const baseName = fn.split(/\s+/)[0];
+                            if (baseName) fields.push({ name: baseName, isPublic: visForFields });
+                        }
+                    }
+                    // Anything else (REM, blank, etc.) is ignored.
+                }
+                ei++;
+            }
+            if (endLine < 0) endLine = sortedLines[sortedLines.length - 1];
+            this._classes[name.toUpperCase()] = {
+                name, parent: parent ? parent.toUpperCase() : null,
+                fields, methods,
+                startLine: i, endLine,
+                methodVtable: null, mybaseVtable: null,
+            };
+            si = ei;  // outer loop ++ will move past END CLASS
+        }
+        // Build virtual-method tables after all classes are registered so
+        // INHERITS / OVERRIDES dispatches can resolve. _buildClassVtable
+        // recurses through parents and copies the parent's table, then
+        // adds/replaces with own methods.
+        for (const k in this._classes) this._buildClassVtable(this._classes[k]);
+    }
+
+    _buildClassVtable(cls) {
+        if (cls.methodVtable) return;
+        cls.methodVtable = {};
+        cls.mybaseVtable = {};
+        cls.allFields    = [];
+        if (cls.parent) {
+            const p = this._classes[cls.parent];
+            if (p) {
+                this._buildClassVtable(p);
+                // copy parent's full vtable
+                for (const m in p.methodVtable) {
+                    cls.methodVtable[m] = p.methodVtable[m];
+                }
+                // mybase points at parent's resolved methods
+                for (const m in p.methodVtable) {
+                    cls.mybaseVtable[m] = p.methodVtable[m];
+                }
+                // inherit parent's fields
+                cls.allFields.push(...p.allFields);
+            }
+        }
+        // Add own fields and methods (own methods replace inherited entries).
+        for (const f of cls.fields)  cls.allFields.push(f);
+        for (const m of cls.methods) {
+            cls.methodVtable[m.name.toUpperCase()] = { method: m, ownerClass: cls };
+        }
+    }
+
+    // CLASS Name [INHERITS Parent]  — during normal execution, jump past
+    // the class body. Class metadata is already registered by _scanClasses.
+    cmdCLASS(param) {
+        if (!this._classes) return CMD_OK;
+        const raw = String(param || '').trim();
+        const sp  = raw.match(/\s+INHERITS\s+/i);
+        const name = (sp ? raw.substring(0, raw.search(/\s+INHERITS\s+/i)) : raw).trim();
+        const cls  = this._classes[name.toUpperCase()];
+        if (!cls) return CMD_OK;
+        // Jump to the line AFTER END CLASS.
+        const endIdx = cls.endLine;
+        const sorted = [...this.lines_assigned].sort((a, b) => a - b);
+        for (let i = 0; i < sorted.length; i++) {
+            if (sorted[i] === endIdx && i + 1 < sorted.length) {
+                return sorted[i + 1];
+            }
+        }
+        return CMD_OK;
+    }
+
+    cmdENDCLASS() { return CMD_OK; }     // metadata, no-op at run-time
+
+    // -----------------------------------------------------------------------
+    // OOP — object instance store
+    //
+    //   _objects[handle] = { classDef, fields: Map<UPPERNAME, value> }
+    //   handle 0 means NOTHING (the null reference).
+    //   _objectsNext is the next-handle-to-allocate counter.
+    // -----------------------------------------------------------------------
+    _objectAlloc(className) {
+        if (!this._classes) return 0;
+        const cls = this._classes[String(className).toUpperCase()];
+        if (!cls) return 0;
+        if (!this._oopObjects) { this._oopObjects = new Map(); this._oopObjectsNext = 1; }
+        const handle = this._oopObjectsNext++;
+        const fields = new Map();
+        for (const f of cls.allFields) {
+            // Default by name convention: $-suffix means string, else 0.
+            const def = f.name.endsWith('$') ? '' : 0;
+            fields.set(f.name.toUpperCase(), def);
+        }
+        this._oopObjects.set(handle, { classDef: cls, fields });
+        return handle;
+    }
+
+    _objectGet(handle) {
+        if (!handle || !this._oopObjects) return null;
+        return this._oopObjects.get(handle) || null;
+    }
+
+    // Resolve a method name on a given class (looking up the vtable).
+    // Returns { method, ownerClass } or null.
+    _objectResolveMethod(cls, methodName) {
+        if (!cls || !cls.methodVtable) return null;
+        return cls.methodVtable[methodName.toUpperCase()] || null;
+    }
+
+    // Push a method-call frame on _sub_stack. Mirrors what cmdCALL does for a
+    // regular SUB, but ALSO binds ME to the receiver handle and snapshots
+    // the receiver's field values into the local variable scope.
+    //
+    //   - selfHandle  : integer handle of the receiver object
+    //   - cls         : the ClassDef whose vtable we resolved on
+    //   - method      : the resolved MethodDef
+    //   - argValues   : already-evaluated argument values, in declaration order
+    //
+    // Returns the line number to jump to (method body start).
+    _enterMethodFrame(selfHandle, cls, method, argValues, isMybase) {
+        const obj = this._objectGet(selfHandle);
+        if (!obj) return -1;
+        // Stash old globals so cmdENDSUB / cmdENDFUNCTION can restore them,
+        // matching the SUB convention.
+        const savedNum = new Map(this.variables_numbers);
+        const savedStr = new Map(this.variables_strings);
+        const savedArrN = new Map(this.variables_arr_numbers);
+        const savedArrS = new Map(this.variables_arr_strings);
+        // Fresh locals for the method body.
+        this.variables_numbers     = new Map();
+        this.variables_strings     = new Map();
+        this.variables_arr_numbers = new Map();
+        this.variables_arr_strings = new Map();
+        // Bind parameters (positional).
+        for (let i = 0; i < method.params.length; i++) {
+            const pn = method.params[i];
+            const v  = argValues[i];
+            if (pn.endsWith('$')) this.variables_strings.set(pn, v == null ? '' : String(v));
+            else                   this.variables_numbers.set(pn, Number(v) || 0);
+        }
+        // Snapshot receiver fields into the local scope under bare names.
+        // The corresponding _exitMethodFrame writes back any changes, but
+        // only for fields whose local value DIFFERS from this snapshot —
+        // otherwise a child frame's changes to inst.fields (e.g. via
+        // MYBASE.Init) would be clobbered by the parent's stale snapshot.
+        const fieldSnapshot = new Map();
+        for (const [fname, fval] of obj.fields) {
+            if (fname.endsWith('$')) this.variables_strings.set(fname, fval);
+            else                      this.variables_numbers.set(fname, fval);
+            fieldSnapshot.set(fname, fval);
+        }
+        // Push the frame.
+        const frame = {
+            isMethod:    true,
+            selfHandle,
+            classDef:    cls,
+            method,
+            isMybase:    !!isMybase,
+            returnLine:  this.run_line + 1,
+            savedGlobals: {
+                num:  savedNum,
+                str:  savedStr,
+                arrN: savedArrN,
+                arrS: savedArrS,
+            },
+            fieldSnapshot,
+            _afterReturn: '',
+            funcResult:   undefined,
+        };
+        this._sub_stack.push(frame);
+        // Method body starts at method.startLine + 1 (the SUB/FUNCTION decl
+        // itself is the header line, body starts after it).
+        return Number(method.startLine);
+    }
+
+    // Pop a method frame: write back any field changes to the receiver,
+    // restore the saved globals, and (for FUNCTIONs) propagate the return
+    // value to the caller's scope via funcResult.
+    _exitMethodFrame() {
+        if (!this._sub_stack || this._sub_stack.length === 0) return null;
+        const frame = this._sub_stack[this._sub_stack.length - 1];
+        if (!frame.isMethod) return null;
+        // Write back field values to receiver, but ONLY when this frame
+        // actually modified the local copy (relative to the entry-time
+        // snapshot). Otherwise we'd overwrite child-frame changes that
+        // occurred via inst.fields (e.g. MYBASE.Init setting parent fields).
+        const obj = this._objectGet(frame.selfHandle);
+        const snap = frame.fieldSnapshot;
+        if (obj && frame.classDef && frame.classDef.allFields) {
+            for (const f of frame.classDef.allFields) {
+                const upper = f.name.toUpperCase();
+                const snapVal = snap ? snap.get(f.name) : undefined;
+                if (f.name.endsWith('$')) {
+                    if (this.variables_strings.has(f.name)) {
+                        const cur = this.variables_strings.get(f.name);
+                        if (cur !== snapVal) obj.fields.set(upper, cur);
+                    }
+                } else {
+                    if (this.variables_numbers.has(f.name)) {
+                        const cur = this.variables_numbers.get(f.name);
+                        if (cur !== snapVal) obj.fields.set(upper, cur);
+                    }
+                }
+            }
+        }
+        // For FUNCTIONs the body assigns the function's name as its return
+        // value. The convention in the existing kernel is for that to be
+        // copied back into the caller's scope at end-of-call. The caller
+        // (NEW / dispatched-call) reads frame.funcResult after pop.
+        if (frame.method && frame.method.isFunc) {
+            const fname = frame.method.name;
+            if (fname.endsWith('$')) {
+                frame.funcResult = this.variables_strings.get(fname) || '';
+            } else {
+                frame.funcResult = this.variables_numbers.get(fname) || 0;
+            }
+        }
+        // Restore saved globals.
+        this.variables_numbers     = frame.savedGlobals.num;
+        this.variables_strings     = frame.savedGlobals.str;
+        this.variables_arr_numbers = frame.savedGlobals.arrN;
+        this.variables_arr_strings = frame.savedGlobals.arrS;
+        this._sub_stack.pop();
+        return frame;
+    }
 
     // -----------------------------------------------------------------------
     // SHARED var1, var2  — declare variables shared with main program
@@ -912,6 +1273,32 @@ class Interpreter {
     cmdCALL(param) {
         if (!param) return CMD_ESYNTAX;
         const raw = this.trim(param);
+        // OOP: CALL obj.method(args) — dispatch on the object's vtable
+        // (or MYBASE.method which skips OVERRIDES in the current class).
+        // Only enter the OOP path if the receiver is ME/MYBASE or a
+        // DIM..AS class-bound variable — otherwise plain CALL handles it.
+        const dotIdx = this._findToplevelMemberDot ? this._findToplevelMemberDot(raw) : -1;
+        if (dotIdx >= 0) {
+            const recv = raw.substring(0, dotIdx).trim();
+            const recvU = recv.toUpperCase();
+            const isMe = (recvU === 'ME' || recvU === 'MYBASE');
+            const simpleVar = /^[A-Za-z_][A-Za-z0-9_]*(\$)?$/.test(recv);
+            let isOop = isMe;
+            if (!isOop && simpleVar) {
+                if (this._dimClass && this._dimClass[recv]) isOop = true;
+                else if (this._oopObjects) {
+                    // Maybe the var holds a live handle even without DIM..AS.
+                    const v = this.variables_numbers && this.variables_numbers.get(recv);
+                    if (v && this._oopObjects.has(Number(v))) isOop = true;
+                }
+            }
+            if (isOop) {
+                this.evalCalc(raw, ASS_NUMBER, 0);
+                return CMD_OK;
+            }
+            // else: fall through and let standard CALL try (probably errors,
+            // but matches pre-OOP behaviour for non-OOP dotted identifiers).
+        }
         const po  = raw.indexOf('(');
         let subName, argStr;
         // SUB names are case-sensitive (Model B) — preserve original case for lookup.
@@ -1028,8 +1415,22 @@ class Interpreter {
         return parts;
     }
 
-    cmdENDSUB()      { return this._returnFromSub(); }
-    cmdENDFUNCTION() { return this._returnFromSub(); }
+    cmdENDSUB()      {
+        // OOP: if the current frame is a method, _dispatchMethod owns its
+        // lifecycle and will pop via _exitMethodFrame. Don't double-pop.
+        if (this._sub_stack && this._sub_stack.length > 0 &&
+            this._sub_stack[this._sub_stack.length - 1].isMethod) {
+            return CMD_OK;
+        }
+        return this._returnFromSub();
+    }
+    cmdENDFUNCTION() {
+        if (this._sub_stack && this._sub_stack.length > 0 &&
+            this._sub_stack[this._sub_stack.length - 1].isMethod) {
+            return CMD_OK;
+        }
+        return this._returnFromSub();
+    }
     cmdEXITSUB()     { return this._returnFromSub(); }
 
     _returnFromSub() {
@@ -3498,6 +3899,9 @@ class Interpreter {
             ['STATIC',       0,  (p) => this.cmdSTATIC(p),       1],
             ['DECLARE',      0,  (p) => this.cmdDECLARE(p),      1],
             ['CALL',         0,  (p) => this.cmdCALL(p),         1],
+            ['CLASS',        0,  (p) => this.cmdCLASS(p),        1],
+            ['END CLASS',    0,  ()  => this.cmdENDCLASS()],
+            ['ENDCLASS',     0,  ()  => this.cmdENDCLASS()],
             ['END SUB',      0,  ()  => this.cmdENDSUB()],
             ['ENDSUB',       0,  ()  => this.cmdENDSUB()],
             ['END FUNCTION', 0,  ()  => this.cmdENDFUNCTION()],
@@ -4282,6 +4686,7 @@ class Interpreter {
         if (this._objAnimTimer) this._objCleanup();
         if (this.o) this.o.classList.remove('graphics-active');
         this._onProgramStop();     // reset colours to defaults
+        this._scanClasses();
         this._scanSubs();
         this._scanData();
         this._scanLabels();
@@ -4355,7 +4760,16 @@ class Interpreter {
                                    rhsUp.includes('MOUSE') || rhsUp.includes('KEYDOWN');
                 const hasFunc = /[A-Z]\w*\s*\(/i.test(rhs);
                 const isSimpleNum = !varName.endsWith('$') && varName.indexOf('(') < 0;
-                const canCache = isSimpleNum && !isVolatile && !hasFunc;
+                // OOP forms must go through parseAssign / evalCalc — they
+                // can't be reduced to a flat variables_numbers.set(varName,...)
+                // because the LHS may be a field write (obj.field = ...) and
+                // the RHS may contain member access, NEW, NOTHING, or IS.
+                const isOop = varName.indexOf('.') >= 0 ||
+                              rhs.indexOf('.') >= 0 ||
+                              /\bNEW\b/i.test(rhs) ||
+                              rhsUp === 'NOTHING' ||
+                              / IS /i.test(' ' + rhs + ' ');
+                const canCache = isSimpleNum && !isVolatile && !hasFunc && !isOop;
                 // exprNode starts null — parsed lazily on first tick execution
                 this._lineCache[ln] = { assign: true, raw: t, varName, rhs, canCache, exprNode: null };
             }

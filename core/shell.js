@@ -363,8 +363,24 @@ class ShellRuntime {
         // FIX: removed spurious `break` — all params are now processed.
         if (!params) return CMD_ESYNTAX;
         if (!this._dimInfo) this._dimInfo = {};
+        if (!this._dimClass) this._dimClass = {};
         for (let thisDim of params) {
             thisDim = thisDim.trim();
+            // OOP: support "DIM x AS ClassName" and "DIM arr(n) AS ClassName".
+            // The `AS ClassName` suffix binds the variable to an object handle
+            // type for later resolution. We strip it here so the legacy DIM
+            // path below sees a clean name. The variable itself is created
+            // as a numeric slot (handle storage). Default value 0 = NOTHING.
+            const asMatch = thisDim.match(/\s+AS\s+([A-Z_][A-Z0-9_]*)\s*$/i);
+            if (asMatch) {
+                const className = asMatch[1].toUpperCase();
+                thisDim = thisDim.substring(0, asMatch.index).trim();
+                // Stash the class binding for the bare/array name so later
+                // assignment / member access can resolve it.
+                const op = thisDim.indexOf('(');
+                const baseName = op >= 0 ? thisDim.substring(0, op).trim() : thisDim;
+                this._dimClass[baseName] = className;
+            }
             const p1   = thisDim.indexOf('$');
             const p2   = thisDim.indexOf('(');
             const p3   = thisDim.indexOf(')');

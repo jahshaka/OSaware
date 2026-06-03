@@ -49,6 +49,9 @@ class Compiler {
         this._soundWait            = false;
         this._soundQueue           = [];
         this._dimInfo              = {};  // clear 2D array dimension info
+        this._dimClass             = {};  // clear DIM..AS Class bindings
+        this._oopObjects           = new Map(); // clear OOP instance store
+        this._oopObjectsNext       = 1;
         this._exprCache            = new Map(); // expression parse tree cache
         // Note: variables_func is intentionally kept (DEF FN persists across RUN).
     }
@@ -153,6 +156,332 @@ class Compiler {
             }
         }
         return -1;
+    }
+
+    // -----------------------------------------------------------------------
+    // OOP helpers — paren+quote-aware scanners for the new operators.
+    // -----------------------------------------------------------------------
+
+    // _findToplevelIS — index of the top-level " IS " operator (case-insensitive)
+    // or -1. Skipped inside parens and quoted strings. Returns the index of the
+    // first space (i.e. of the leading ' ' before "IS"). The caller adds 4 to
+    // skip past " IS ".
+    _findToplevelIS(s) {
+        let depth = 0, inQ = false;
+        const up = s.toUpperCase();
+        for (let i = 0; i < s.length - 3; i++) {
+            const c = s[i];
+            if (c === '"') { inQ = !inQ; continue; }
+            if (inQ) continue;
+            if (c === '(') { depth++; continue; }
+            if (c === ')') { depth--; continue; }
+            if (depth !== 0) continue;
+            // Match " IS " surrounded by whitespace (or start/end-of-string).
+            if (c === ' ' && up[i+1] === 'I' && up[i+2] === 'S' && up[i+3] === ' ') {
+                // Reject identifiers like "ISP" or "VARS" containing IS.
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // _findToplevelMemberDot — index of a dot that is a member-access dot
+    // (i.e. one that follows an identifier or a closing paren), at depth 0,
+    // outside quotes, AND where the resulting member access pattern consumes
+    // the rest of the expression. Returns -1 if the expression isn't a pure
+    // member access, so the caller can fall through to the standard operator
+    // scan (e.g. for "ME.V + amt" where `+` should win).
+    _findToplevelMemberDot(s) {
+        // The expression must be entirely a pure member access of the form:
+        //   identifier[$] [ '(' args ')' ] . identifier[$] [ '(' args ')' ]
+        // Anything else (e.g. "ME.A + ME.B") returns -1, so the standard
+        // operator scan in evalCalc handles the binary operators first.
+        let j = 0;
+        // Skip leading whitespace.
+        while (j < s.length && (s[j] === ' ' || s[j] === '\t')) j++;
+        // Receiver must start with [A-Za-z_].
+        if (j >= s.length || !/[A-Za-z_]/.test(s[j])) return -1;
+        j++;
+        while (j < s.length && /[A-Za-z0-9_]/.test(s[j])) j++;
+        if (j < s.length && s[j] === '$') j++;
+        // Optional (args) for array receivers / function-call results.
+        if (j < s.length && s[j] === '(') {
+            const cp = this._matchingClose(s, j);
+            if (cp < 0) return -1;
+            j = cp + 1;
+        }
+        // Skip whitespace between receiver and dot.
+        while (j < s.length && (s[j] === ' ' || s[j] === '\t')) j++;
+        // Must be at the dot.
+        if (j >= s.length || s[j] !== '.') return -1;
+        const dotIdx = j;
+        j++;
+        // Member name starts with [A-Za-z_].
+        if (j >= s.length || !/[A-Za-z_]/.test(s[j])) return -1;
+        j++;
+        while (j < s.length && /[A-Za-z0-9_]/.test(s[j])) j++;
+        if (j < s.length && s[j] === '$') j++;
+        // Optional (args) for method calls.
+        if (j < s.length && s[j] === '(') {
+            const cp = this._matchingClose(s, j);
+            if (cp < 0) return -1;
+            j = cp + 1;
+        }
+        // Trailing whitespace, then must be end-of-string.
+        while (j < s.length && (s[j] === ' ' || s[j] === '\t')) j++;
+        if (j < s.length) return -1;
+        return dotIdx;
+    }
+
+    // _evalNewExpr — handle the body of "NEW " (everything after the keyword).
+    //   Form:    ClassName(arg1, arg2, ...)
+    //   Returns: integer handle (or 0 if class unknown).
+    _evalNewExpr(rest) {
+        const op = rest.indexOf('(');
+        let className, argStr = '';
+        if (op >= 0) {
+            const cp = this._matchingClose(rest, op);
+            className = rest.substring(0, op).trim();
+            argStr    = (cp > op) ? rest.substring(op + 1, cp) : '';
+        } else {
+            className = rest.trim();
+        }
+        if (!this._objectAlloc) return 0;
+        const handle = this._objectAlloc(className);
+        if (!handle) return 0;
+        // If the class declares an Init method, call it with the args.
+        const cls = this._classes[className.toUpperCase()];
+        const initEntry = cls && cls.methodVtable ? cls.methodVtable['INIT'] : null;
+        if (initEntry) {
+            const args = argStr.trim() ? this._splitTopLevelCommas(argStr).map(a => this._evalArg(a)) : [];
+            this._dispatchMethod(handle, cls, initEntry.method, args, false);
+        }
+        return handle;
+    }
+
+    // _evalArg — evaluate one argument expression with type detection
+    // (string if ends with $, else numeric).
+    _evalArg(expr) {
+        const t = expr.trim();
+        // Detect string by literal or var name
+        if (t.startsWith('"')) {
+            const end = t.lastIndexOf('"');
+            if (end > 0) return t.substring(1, end);
+        }
+        // Heuristic: if first identifier ends with $ -> string
+        const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*\$)\b/);
+        if (m) return this.evalCalc(t, ASS_STRING, 0);
+        // Otherwise number
+        return this.evalCalc(t, ASS_NUMBER, 0);
+    }
+
+    // _evalMemberExpr — handles  obj.field  /  obj.method(args)  expressions.
+    //   s        : the full expression text
+    //   dotIdx   : index of the top-level member-access dot in s
+    //   assignType: caller's expected type (used to pick numeric vs string read)
+    //
+    // The LEFT side of the dot resolves to an object handle (a variable or a
+    // function call returning a handle, or the MYBASE/ME keywords). The RIGHT
+    // side is either a bare identifier (field read) or an identifier followed
+    // by parens (method call).
+    _evalMemberExpr(s, dotIdx, assignType, level) {
+        const leftRaw  = s.substring(0, dotIdx).trim();
+        const rightRaw = s.substring(dotIdx + 1).trim();
+        const leftUpper = leftRaw.toUpperCase();
+        const isMybase  = (leftUpper === 'MYBASE');
+        const isMe      = (leftUpper === 'ME');
+        // Resolve receiver handle and dispatching class.
+        let selfHandle = 0;
+        let dispatchCls = null;
+        if (isMe || isMybase) {
+            const frame = this._meFrame();
+            if (!frame) return undefined;     // fall through — not in a method
+            selfHandle = frame.selfHandle;
+            dispatchCls = isMybase ? frame.classDef : frame.classDef;
+            if (isMybase) {
+                // For MYBASE we use mybaseVtable instead of methodVtable.
+                dispatchCls = { ...frame.classDef, methodVtable: frame.classDef.mybaseVtable };
+            }
+        } else {
+            // The receiver must be a known object handle. If the variable
+            // isn't tied to a class via DIM ... AS, and doesn't resolve to
+            // a live OOP object, this dot isn't an OOP member access at all
+            // — it's a built-in like GL.MESHID or a namespaced identifier.
+            // Return undefined so the caller falls back to standard eval.
+            const simpleVar = /^[A-Za-z_][A-Za-z0-9_]*(\$)?$/.test(leftRaw);
+            const declaredClass = simpleVar && this._dimClass ? this._dimClass[leftRaw] : null;
+            if (!declaredClass) {
+                // Try treating it as an arbitrary expression that might evaluate
+                // to a handle. But to avoid touching non-OOP built-ins, only do
+                // this when we have an _oopObjects map AND the value is a
+                // live handle key.
+                if (!this._oopObjects) return undefined;
+                const tryHandle = Number(this.evalCalc(leftRaw, ASS_NUMBER, level + 1)) || 0;
+                if (!tryHandle || !this._oopObjects.has(tryHandle)) return undefined;
+                selfHandle = tryHandle;
+            } else {
+                selfHandle = Number(this.evalCalc(leftRaw, ASS_NUMBER, level + 1)) || 0;
+                if (!selfHandle) return undefined;
+            }
+            const inst = this._objectGet(selfHandle);
+            if (!inst) return undefined;
+            dispatchCls = inst.classDef;
+        }
+        // Parse the right side: identifier [(args)].
+        const op = rightRaw.indexOf('(');
+        let memberName, argStr = null;
+        if (op >= 0) {
+            const cp = this._matchingClose(rightRaw, op);
+            memberName = rightRaw.substring(0, op).trim();
+            argStr     = (cp > op) ? rightRaw.substring(op + 1, cp) : '';
+        } else {
+            memberName = rightRaw.trim();
+        }
+        // Field read?  No parens AND name is a known field in the class.
+        if (argStr === null) {
+            const inst = this._objectGet(selfHandle);
+            if (!inst) return 0;
+            const upper = memberName.toUpperCase();
+            if (inst.fields.has(upper)) {
+                const v = inst.fields.get(upper);
+                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) return String(v == null ? '' : v);
+                return Number(v) || 0;
+            }
+            return 0;
+        }
+        // Method call.
+        const methodEntry = dispatchCls.methodVtable[memberName.toUpperCase()];
+        if (!methodEntry) return 0;
+        const args = argStr.trim() ? this._splitTopLevelCommas(argStr).map(a => this._evalArg(a)) : [];
+        // The dispatched method runs in the context of its DEFINING class —
+        // so MYBASE inside the body correctly walks the parent chain of the
+        // method's owner, not the original receiver's class. This is what
+        // makes 2-level inheritance (Cat → Mammal → Animal) work without
+        // infinite recursion when MYBASE.Init is called from each level.
+        const ownerCls = methodEntry.ownerClass || dispatchCls;
+        const result = this._dispatchMethod(selfHandle, ownerCls, methodEntry.method, args, isMybase);
+        if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) {
+            return String(result == null ? '' : result);
+        }
+        return Number(result) || 0;
+    }
+
+    // _meFrame — return the nearest enclosing method frame (or null).
+    _meFrame() {
+        const stack = this._sub_stack;
+        if (!stack) return null;
+        for (let i = stack.length - 1; i >= 0; i--) {
+            if (stack[i].isMethod) return stack[i];
+        }
+        return null;
+    }
+
+    // _dispatchMethod — synchronously invoke a class method. Saves+restores
+    // the interpreter's run_line / line_remaining around the inline execution
+    // so the caller's flow is undisturbed. Returns the function's return
+    // value (or undefined for SUBs).
+    _dispatchMethod(handle, cls, method, args, isMybase) {
+        const k = this;
+        const savedRunLine      = k.run_line;
+        const savedLineRemaining = k.line_remaining;
+        const savedIfLine        = k.if_line;
+        k.line_remaining = '';
+        k.if_line        = '';
+        const entryLine = k._enterMethodFrame(handle, cls, method, args, isMybase);
+        if (entryLine < 0) {
+            // Failed to enter — restore and return.
+            k.run_line       = savedRunLine;
+            k.line_remaining = savedLineRemaining;
+            k.if_line        = savedIfLine;
+            return undefined;
+        }
+        // Inline-body form: the SUB/FUNCTION declaration, body, and END SUB
+        // are all on the same physical line ("SUB N(x) : body : END SUB").
+        // _scanClasses extracted the body text — interpret it as a single
+        // multi-statement line.
+        if (method.inlineBody !== null && method.inlineBody !== undefined) {
+            let body = method.inlineBody;
+            // Walk colon-separated statements, paren-aware, quote-aware.
+            const stmts = [];
+            let depth = 0, inQ = false, start = 0;
+            for (let i = 0; i < body.length; i++) {
+                const c = body[i];
+                if (c === '"') { inQ = !inQ; continue; }
+                if (inQ) continue;
+                if (c === '(') { depth++; continue; }
+                if (c === ')') { depth--; continue; }
+                if (c === ':' && depth === 0) {
+                    stmts.push(body.substring(start, i).trim());
+                    start = i + 1;
+                }
+            }
+            stmts.push(body.substring(start).trim());
+            for (const stmt of stmts) {
+                if (!stmt) continue;
+                k.run_line = method.startLine;
+                k.interpret(stmt);
+            }
+            const popped = k._exitMethodFrame();
+            const result = popped ? popped.funcResult : undefined;
+            k.run_line       = savedRunLine;
+            k.line_remaining = savedLineRemaining;
+            k.if_line        = savedIfLine;
+            return result;
+        }
+        // Step from entryLine+1 until we hit END SUB / END FUNCTION,
+        // pop the frame, and return the result.
+        const sortedLines = [...k.lines_assigned].sort((a, b) => a - b);
+        // Find the first line index AFTER method.startLine.
+        let pc = -1;
+        for (let i = 0; i < sortedLines.length; i++) {
+            if (sortedLines[i] > method.startLine) { pc = i; break; }
+        }
+        if (pc < 0) {
+            k._exitMethodFrame();
+            k.run_line       = savedRunLine;
+            k.line_remaining = savedLineRemaining;
+            k.if_line        = savedIfLine;
+            return undefined;
+        }
+        // Execute lines until END SUB/FUNCTION reached. We re-enter interpret()
+        // line-by-line. This is a synchronous mini-runner that piggybacks on
+        // the existing interpret() machinery without entangling tick().
+        const endLineNo = method.endLine;
+        const guard = 100000;  // runaway-loop sentinel
+        let steps  = 0;
+        let curIdx = pc;
+        while (steps++ < guard && curIdx < sortedLines.length) {
+            const ln = sortedLines[curIdx];
+            if (ln >= endLineNo) break;
+            k.run_line = ln;
+            const txt = k.lines[ln] || '';
+            const newLn = k.interpret(txt);
+            // Drain any if_line pending from the just-run statement.
+            while (k.if_line !== '') {
+                const _if = k.if_line; k.if_line = '';
+                const r = k.interpret(_if);
+                if (r >= 0) { k.run_line = r; }
+            }
+            if (newLn === -2 || newLn === CMD_END) break;
+            if (newLn === -3 /* EXIT SUB sentinel? */ ) break;
+            if (newLn !== undefined && newLn !== null && newLn >= 0) {
+                // jump — find the new line index
+                let nidx = -1;
+                for (let i = 0; i < sortedLines.length; i++) {
+                    if (sortedLines[i] === newLn) { nidx = i; break; }
+                }
+                if (nidx < 0) break;
+                curIdx = nidx;
+            } else {
+                curIdx++;
+            }
+        }
+        const popped = k._exitMethodFrame();
+        const result = popped ? popped.funcResult : undefined;
+        k.run_line       = savedRunLine;
+        k.line_remaining = savedLineRemaining;
+        k.if_line        = savedIfLine;
+        return result;
     }
 
     getElement(variableName) {
@@ -1046,6 +1375,41 @@ class Compiler {
         const s = calculation.trim();
         if (!s) return (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) ? '' : 0;
 
+        // ── OOP pre-checks (must run BEFORE the expression cache because
+        //     they introduce side effects — NEW allocates, method calls run
+        //     user code, etc.). The patterns we recognise are:
+        //
+        //       NOTHING                       — the null-handle literal
+        //       NEW ClassName(args)           — instantiate, returns handle
+        //       expr1 IS expr2                — reference equality
+        //       obj.field                     — member read
+        //       obj.method(args)              — method-call expression
+        //
+        //   _findToplevelIS / _findToplevelDot / _findMatchingClose are
+        //   paren-aware so nested calls don't trip them.
+        // ───────────────────────────────────────────────────────────────────
+        const sUpper = s.toUpperCase();
+        if (sUpper === 'NOTHING') return 0;
+        if (sUpper.startsWith('NEW ') || sUpper.startsWith('NEW\t')) {
+            return this._evalNewExpr(s.substring(4).trim());
+        }
+        const isIdx = this._findToplevelIS(s);
+        if (isIdx >= 0) {
+            const left  = s.substring(0, isIdx).trim();
+            const right = s.substring(isIdx + 4).trim();
+            const a = Number(this.evalCalc(left,  ASS_NUMBER, level + 1)) || 0;
+            const b = Number(this.evalCalc(right, ASS_NUMBER, level + 1)) || 0;
+            return (a === b) ? 1 : 0;
+        }
+        const dotIdx = this._findToplevelMemberDot(s);
+        if (dotIdx >= 0) {
+            const oopResult = this._evalMemberExpr(s, dotIdx, assignType, level);
+            // undefined = "not OOP after all" (e.g. GL.MESHID, namespaced
+            // built-in). Fall through to normal expression handling.
+            if (oopResult !== undefined) return oopResult;
+        }
+        // ───────────────────────────────────────────────────────────────────
+
         // ── OPT-CACHE: Use pre-parsed expression tree for hot expressions ──
         // Only cache at the top level (level===0) and for non-string types.
         // Never cache volatile built-ins or expressions containing them.
@@ -1055,7 +1419,11 @@ class Compiler {
             const isVolatile = Compiler._VOLATILE.has(su) ||
                                su.includes('TIMER') || su.includes('INKEY') ||
                                su.includes('SECONDS') || su.includes('RND') ||
-                               su.includes('MOUSE') || su.includes('KEYDOWN');
+                               su.includes('MOUSE') || su.includes('KEYDOWN') ||
+                               // OOP — bypass cache, evalCalc has its own paths
+                               s.includes('.') ||
+                               su === 'NOTHING' || su.startsWith('NEW ') ||
+                               / IS /i.test(' ' + s + ' ');
             if (!isVolatile) {
                 let node = this._exprCache.get(s);
                 if (!node) {
@@ -1246,6 +1614,54 @@ class Compiler {
         const varName    = lineToParse.substring(0, eqPos).trim();  // trim spaces around =
         const assignment = lineToParse.substring(eqPos + 1).trim();
 
+        // OOP: "obj.field = expr" — write to the receiver's field rather than
+        // a regular variable. The LHS contains a dot at top level.
+        {
+            const dotIdx = this._findToplevelMemberDot(varName);
+            if (dotIdx >= 0) {
+                const recvRaw   = varName.substring(0, dotIdx).trim();
+                const fieldName = varName.substring(dotIdx + 1).trim();
+                const recvUpper = recvRaw.toUpperCase();
+                let selfHandle = 0;
+                let isOopWrite = false;
+                if (recvUpper === 'ME' || recvUpper === 'MYBASE') {
+                    const frame = this._meFrame();
+                    if (frame) { selfHandle = frame.selfHandle; isOopWrite = true; }
+                } else {
+                    const simpleVar = /^[A-Za-z_][A-Za-z0-9_]*(\$)?$/.test(recvRaw);
+                    const declaredClass = simpleVar && this._dimClass ? this._dimClass[recvRaw] : null;
+                    if (declaredClass) {
+                        selfHandle = Number(this.evalCalc(recvRaw, ASS_NUMBER, 0)) || 0;
+                        if (selfHandle) isOopWrite = true;
+                    } else if (this._oopObjects) {
+                        const tryHandle = Number(this.evalCalc(recvRaw, ASS_NUMBER, 0)) || 0;
+                        if (tryHandle && this._oopObjects.has(tryHandle)) {
+                            selfHandle = tryHandle;
+                            isOopWrite = true;
+                        }
+                    }
+                }
+                if (!isOopWrite) {
+                    // Not an OOP write — fall through to standard variable
+                    // assignment (so things like GL.X = expr aren't hijacked).
+                } else {
+                const inst = this._objectGet(selfHandle);
+                if (!inst) return null;
+                const upper = fieldName.toUpperCase();
+                // Evaluate RHS in correct type (string if field-name ends with $).
+                const isStr = fieldName.endsWith('$');
+                const val   = this.evalCalc(assignment, isStr ? ASS_STRING : ASS_NUMBER, 0);
+                inst.fields.set(upper, isStr ? String(val == null ? '' : val) : Number(val) || 0);
+                // Also reflect into the current method's bare-name scope so
+                // subsequent reads in the same method see the new value
+                // without a fresh field-snapshot.
+                if (isStr) this.variables_strings.set(fieldName, String(val == null ? '' : val));
+                else       this.variables_numbers.set(fieldName, Number(val) || 0);
+                return false;
+                }   // end isOopWrite
+            }
+        }
+
         if (assignment === 'GETKEY()') {
             this.want_keypress = 1;
             this.input_var     = varName;
@@ -1261,7 +1677,12 @@ class Compiler {
             const au = assignment.toUpperCase();
             const isVolatile = au.includes('TIMER') || au.includes('INKEY') ||
                                au.includes('SECONDS') || au.includes('RND') ||
-                               au.includes('MOUSE') || au.includes('KEYDOWN');
+                               au.includes('MOUSE') || au.includes('KEYDOWN') ||
+                               // OOP forms — _parseExprTree can't reduce these;
+                               // route to evalCalc which has OOP fast paths.
+                               assignment.includes('.') ||
+                               au === 'NOTHING' || au.startsWith('NEW ') ||
+                               / IS /i.test(' ' + assignment + ' ');
             if (!isVolatile) {
                 let node = this._exprCache.get(assignment);
                 if (!node) {
@@ -1438,7 +1859,14 @@ class Compiler {
         };
 
         let opPos=-1, op='', cond='';
-        if      ((opPos=findOp(expr,'>='))>=0){op='>=';cond='ge';}
+        // OOP: `IS` is a word-bounded reference-equality comparison. Treat as
+        // numeric `=` since handles are integers. Detected BEFORE the symbol
+        // comparison ops so `x IS NOTHING` parses as a cmp node, not a
+        // truthy expression on `x IS NOTHING` (which _parseExprTree can't
+        // make sense of).
+        const isKwIdx = findKw(expr, 'IS');
+        if (isKwIdx >= 0) { opPos = isKwIdx; op = 'IS'; cond = 'eq'; }
+        else if ((opPos=findOp(expr,'>='))>=0){op='>=';cond='ge';}
         else if ((opPos=findOp(expr,'<='))>=0){op='<=';cond='le';}
         else if ((opPos=findOp(expr,'<>'))>=0){op='<>';cond='ne';}
         else if ((opPos=findOp(expr,'<')) >=0){op='<'; cond='lt';}
@@ -1450,9 +1878,17 @@ class Compiler {
             const right = expr.substring(opPos+op.length).trim();
             const isStr = left.startsWith('"')||right.startsWith('"')||
                           left.endsWith('$')||right.endsWith('$');
-            // Parse sub-expressions for the cache
-            const lNode = isStr ? null : this._parseExprTree(left);
-            const rNode = isStr ? null : this._parseExprTree(right);
+            // OOP: expressions with `.` (member access), `NEW`, or the
+            // NOTHING literal can't be reduced by _parseExprTree — leave
+            // their nodes null so the cmp evaluator falls back to evalCalc
+            // (which has the OOP fast paths).
+            const isOOP = (e) => {
+                if (!e) return false;
+                const u = e.toUpperCase();
+                return e.includes('.') || u === 'NOTHING' || u.startsWith('NEW ');
+            };
+            const lNode = (isStr || isOOP(left))  ? null : this._parseExprTree(left);
+            const rNode = (isStr || isOOP(right)) ? null : this._parseExprTree(right);
             return {t:'cmp', cond, isStr,
                     lNode, rNode,
                     lRaw:left, rRaw:right};
