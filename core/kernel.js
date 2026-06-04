@@ -72,6 +72,9 @@ class Interpreter {
         this._onCollisionLine  = null;  // line number of ON COLLISION handler
         this._collisionPending = false; // flag for tick() to fire event handler
         this._glLoadPending    = false; // true while GL.LOAD is fetching a model — tick() pauses
+        // Wallet (Stage 1) state lives in ProcessMemory — see process_memory.js
+        // — so every BASIC program starts disconnected and must explicitly
+        // call WALLETCONNECT to gain access. Forwarders below.
         this._objClip          = null;  // clipping rectangle
         this._objAnimTimer     = null;  // setInterval handle
 
@@ -90,6 +93,7 @@ class Interpreter {
         this._gfxDrv   = new GfxDriver(this);   // GFX 2D driver  — Step 2b of V7 refactor
         this._shell    = new ShellRuntime(this); // Shell runtime  — Step 4 of V7 refactor
         this._winDrv   = new WindowDriver(this); // Window IPC driver
+        this._walletDrv = (typeof WalletDriver !== 'undefined') ? new WalletDriver(this) : null;
 
         // Register all driver syscall handlers on the bus
         this._registerDriverSyscalls();
@@ -1933,6 +1937,20 @@ class Interpreter {
         // Emit kernel lifecycle event so bus listeners (e.g. GL canvas hide) fire
         this.kernel.emit('program.stop');
 
+        // Wallet hygiene: if a wallet operation was pending when the program
+        // was broken, release the pending flag and detach event listeners +
+        // idle watch on the OUTGOING ProcessMemory. Any in-flight Promise
+        // chain will detect the memory swap via its captured _memAtStart and
+        // no-op, so it can't write _walletPending=true into the next program.
+        if (this._walletDrv) {
+            if (this._walletEvents)             this._walletDrv._walletDetachEvents();
+            if (this._walletDrv._walletTeardownIdleWatch) this._walletDrv._walletTeardownIdleWatch();
+            this._walletPending = false;
+            // Clear any pending picker / Y-N keypress callback.
+            this._walletWaitingKey = false;
+            this._walletPickerCb   = null;
+        }
+
         // ── Restore shell memory (PID 1) ───────────────────────────────────
         // Unregister the program PID and swap back to the shell's ProcessMemory.
         // The shell's lines[], variables etc are untouched — exactly as a real OS
@@ -3011,6 +3029,26 @@ class Interpreter {
     get _arrMax()             { return this._mem._arrMax; }
     set _arrMax(v)            { this._mem._arrMax = v; }
 
+    // Wallet (Stage 1) — per-program state, ProcessMemory-backed.
+    get _walletAddress()         { return this._mem._walletAddress; }
+    set _walletAddress(v)        { this._mem._walletAddress = v; }
+    get _walletChainId()         { return this._mem._walletChainId; }
+    set _walletChainId(v)        { this._mem._walletChainId = v; }
+    get _walletProvider()        { return this._mem._walletProvider; }
+    set _walletProvider(v)       { this._mem._walletProvider = v; }
+    get _walletPending()         { return this._mem._walletPending; }
+    set _walletPending(v)        { this._mem._walletPending = v; }
+    get _walletEvents()          { return this._mem._walletEvents; }
+    set _walletEvents(v)         { this._mem._walletEvents = v; }
+    get _walletTokenCache()      { return this._mem._walletTokenCache; }
+    set _walletTokenCache(v)     { this._mem._walletTokenCache = v; }
+    get _walletBalanceCache()    { return this._mem._walletBalanceCache; }
+    set _walletBalanceCache(v)   { this._mem._walletBalanceCache = v; }
+    get _walletBalanceFetching() { return this._mem._walletBalanceFetching; }
+    set _walletBalanceFetching(v){ this._mem._walletBalanceFetching = v; }
+    get _walletShowZero()        { return this._mem._walletShowZero; }
+    set _walletShowZero(v)       { this._mem._walletShowZero = v; }
+
     // Variable heap
     get variables_numbers()     { return this._mem.variables_numbers; }
     set variables_numbers(v)    { this._mem.variables_numbers = v; }
@@ -3337,6 +3375,13 @@ class Interpreter {
     cmdGL_POLYHEDRON(p)        { return this.kernel.post({syscall:'gl.polyhedron',param:p}); }
     cmdGL_LOAD(p)              { return this.kernel.post({syscall:'gl.load',param:p}); }
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
+
+    // Wallet (Stage 1) — forwarders to the WalletDriver.
+    cmdWALLETCONNECT()         { return this._walletDrv ? this._walletDrv.cmdWALLETCONNECT() : CMD_OK; }
+    cmdWALLETDISCONNECT()      { return this._walletDrv ? this._walletDrv.cmdWALLETDISCONNECT() : CMD_OK; }
+    cmdWALLETREFRESH()         { return this._walletDrv ? this._walletDrv.cmdWALLETREFRESH() : CMD_OK; }
+    cmdWALLETSWITCH(p)         { return this._walletDrv ? this._walletDrv.cmdWALLETSWITCH(p) : CMD_OK; }
+    cmdWALLETSHOWZERO(p)       { return this._walletDrv ? this._walletDrv.cmdWALLETSHOWZERO(p) : CMD_OK; }
 
 
     // AIKEY — store the Anthropic API key for this session.
@@ -3981,6 +4026,12 @@ class Interpreter {
             ['OBJECT.AY',       0,  (p) => this.cmdOBJECT_AY(p),       1],
             ['OBJECT.X',        0,  (p) => this.cmdOBJECT_X(p),        1],
             ['OBJECT.Y',        0,  (p) => this.cmdOBJECT_Y(p),        1],
+            // Wallet (Stage 1) — verb commands follow the GL.X pattern.
+            ['WALLET.INIT',      0,  ()  => this.cmdWALLETCONNECT()],
+            ['WALLET.END',       0,  ()  => this.cmdWALLETDISCONNECT()],
+            ['WALLET.REFRESH',   0,  ()  => this.cmdWALLETREFRESH()],
+            ['WALLET.SWITCH',    1,  (p) => this.cmdWALLETSWITCH(p && p[0]), 0],
+            ['WALLET.SHOWZERO',  1,  (p) => this.cmdWALLETSHOWZERO(p && p[0]), 0],
             ['COLLISION ON',    0,  ()  => this.cmdCOLLISION_ON()],
             ['COLLISION OFF',   0,  ()  => this.cmdCOLLISION_OFF()],
             ['COLLISION STOP',  0,  ()  => this.cmdCOLLISION_STOP()],
@@ -4651,6 +4702,15 @@ class Interpreter {
         // The program lines were loaded into _mem by cmdLOAD — copy them over,
         // then swap to the new isolated memory. Shell memory (PID 1) is preserved.
         if (this.os && this._shellMem) {
+            // Wallet hygiene: detach the OUTGOING ProcessMemory's wallet event
+            // listeners before discarding it. Otherwise accountsChanged /
+            // chainChanged callbacks would still fire into a dead frame.
+            if (this._walletDrv && this._walletEvents) {
+                this._walletDrv._walletDetachEvents();
+            }
+            if (this._walletDrv && this._walletDrv._walletTeardownIdleWatch) {
+                this._walletDrv._walletTeardownIdleWatch();
+            }
             // If a previous program PID exists, unregister it
             if (this._programPid !== null) {
                 this.os._processes.delete(this._programPid);
@@ -4804,7 +4864,7 @@ class Interpreter {
     // FIX: bounds check added before the skip-empty-lines loop.
     // -----------------------------------------------------------------------
     tick(a) {
-        if (this.want_keypress || this.want_input || this._glLoadPending || this._resizePending) return;
+        if (this.want_keypress || this.want_input || this._glLoadPending || this._walletPending || this._resizePending) return;
 
         // Check for pending ON COLLISION GOSUB event (set by the animation timer).
         if (this._collisionPending && this._onCollisionLine && this.running &&
@@ -4895,7 +4955,7 @@ class Interpreter {
             for (let _b = 0; _b < 100000 && this.running && !iStopped; _b++) {
                 if (_batchDeadline > 0 && (_b & 63) === 0 && performance.now() > _batchDeadline) break;
                 // Check yield conditions BEFORE executing each statement.
-                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress || this._glLoadPending || this._resizePending) break;
+                if (this.sleepy_time > 0 || this.want_input || this.want_ai || this.want_auth || this.want_keypress || this._glLoadPending || this._walletPending || this._resizePending) break;
                 if (this.line_remaining !== '') break;
                 if (this.lines[this.run_line] !== '') {
                     if (this._trace) this.appendLine('[' + this.run_line + ']', 0);

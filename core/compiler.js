@@ -6,7 +6,8 @@ let _BUILTIN_NUM_NAMES_SET = null;
 
 // Module-level Sets for function type detection — created once, reused on every call.
 const _STR_FUNCS = new Set(['TAB$', 'LINES$', 'LEFT$', 'RIGHT$', 'MID$',
-                             'CENTER$', 'CHR$', 'UPPER$', 'LOWER$', 'STR$', 'VFSGET$', 'FOLDEREXISTS$', 'WINDOW.MSG$', 'DEVICE$', 'SCREENW$', 'SCREENH$', 'WHOAMI$', 'DEVWHOAMI$']);
+                             'CENTER$', 'CHR$', 'UPPER$', 'LOWER$', 'STR$', 'VFSGET$', 'FOLDEREXISTS$', 'WINDOW.MSG$', 'DEVICE$', 'SCREENW$', 'SCREENH$', 'WHOAMI$', 'DEVWHOAMI$',
+                             'WALLET.TOKENSYMBOL$']);
 const _NUM_FUNCS = new Set(['LEN', 'INT', 'RND', 'ABS', 'SQR', 'VAL',
                              'SGN', 'FIX', 'EXP', 'LOG', 'SIN', 'COS',
                              'TAN', 'ATN', 'CLNG', 'CSNG', 'CVI', 'CVL',
@@ -14,7 +15,8 @@ const _NUM_FUNCS = new Set(['LEN', 'INT', 'RND', 'ABS', 'SQR', 'VAL',
                              'ASC', 'INSTR', 'LBOUND', 'UBOUND', 'POINT',
                              'OBJECT.X', 'OBJECT.Y', 'OBJECT.VX', 'OBJECT.VY',
                              'OBJECT.AX', 'OBJECT.AY', 'OBJECT.PRIORITY',
-                             'COLLISION', 'WS.STATUS', 'MOUSE', 'KEYDOWN', 'WINDOW.STATUS', 'WINDOW.PID', 'LAUNCH']);
+                             'COLLISION', 'WS.STATUS', 'MOUSE', 'KEYDOWN', 'WINDOW.STATUS', 'WINDOW.PID', 'LAUNCH',
+                             'WALLET.TOKEN', 'WALLET.TOKENAT']);
 
 
 // ---------------------------------------------------------------------------
@@ -363,7 +365,16 @@ class Compiler {
             const upper = memberName.toUpperCase();
             if (inst.fields.has(upper)) {
                 const v = inst.fields.get(upper);
-                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) return String(v == null ? '' : v);
+                // Field-name sigil ($) tells us the storage type. ASS_ANY
+                // (called from PRINT etc.) must preserve the actual type so
+                // a hex-looking string like a wallet address isn't coerced
+                // back to a number via Number("0xabc...").
+                const isStrField = memberName.endsWith('$');
+                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING ||
+                    (assignType === ASS_ANY && isStrField)) {
+                    return String(v == null ? '' : v);
+                }
+                if (assignType === ASS_ANY) return v;
                 return Number(v) || 0;
             }
             return 0;
@@ -379,9 +390,15 @@ class Compiler {
         // infinite recursion when MYBASE.Init is called from each level.
         const ownerCls = methodEntry.ownerClass || dispatchCls;
         const result = this._dispatchMethod(selfHandle, ownerCls, methodEntry.method, args, isMybase);
-        if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) {
+        // Method-name sigil ($) determines the return type. Under ASS_ANY
+        // (PRINT context), we MUST trust the sigil — otherwise a string
+        // result like "0xabc..." gets Number()'d to scientific notation.
+        const isStrReturn = methodEntry.method.name.endsWith('$');
+        if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING ||
+            (assignType === ASS_ANY && isStrReturn)) {
             return String(result == null ? '' : result);
         }
+        if (assignType === ASS_ANY) return result;
         return Number(result) || 0;
     }
 
@@ -678,6 +695,11 @@ class Compiler {
                     case 'AIG_PITCH': return this._gl ? (this._gl._navPitch || 0) : 0;
                     case 'AIG_BOOST': return this._gl ? (this._gl._navBoost || 0) : 0;
                     case 'AIG_SEV':   return this._gl ? (this._gl._navSev   || 0) : 0;
+                    // Wallet (Stage 1) — see docs/OSaware Wallet.pdf.
+                    case 'WALLET.CHAINID':    return this._walletDrv ? this._walletDrv.walletChainId()   : 0;
+                    case 'WALLET.BALANCE':    return this._walletDrv ? this._walletDrv.walletBalance()   : 0;
+                    case 'WALLET.CONNECTED':  return this._walletDrv ? this._walletDrv.walletConnected() : 0;
+                    case 'WALLET.TOKENCOUNT': return this._walletDrv ? this._walletDrv.walletTokenCount(): 0;
                 }
 
                 // Numeric built-in functions  e.g. ABS(…), RND(…) …
@@ -705,6 +727,28 @@ class Compiler {
                             const obj = this._objects && this._objects[id];
                             return obj ? Number(obj[prop]) : 0;
                         }
+                    }
+
+                    // WALLET.TOKEN(symbol$) — ERC-20 balance from the registry.
+                    // symbol can be a string literal "USDC" or a string var X$.
+                    if (upper.startsWith('WALLET.TOKEN(')) {
+                        if (!this._walletDrv) return 0;
+                        const symRaw = this.extractValue(variableName, 1);
+                        let sym = '';
+                        if (symRaw.startsWith('"')) {
+                            const end = symRaw.lastIndexOf('"');
+                            if (end > 0) sym = symRaw.slice(1, end);
+                        } else {
+                            sym = String(this.evalCalc(symRaw, ASS_STRING) || '');
+                        }
+                        return this._walletDrv.walletToken(sym);
+                    }
+                    // WALLET.TOKENAT(i) — value of the i-th non-zero token.
+                    if (upper.startsWith('WALLET.TOKENAT(')) {
+                        if (!this._walletDrv) return 0;
+                        const arg = this.extractValue(variableName, 1);
+                        const idx = Math.floor(Number(this.evalCalc(arg, ASS_NUMBER)));
+                        return this._walletDrv.walletTokenValueAt(idx);
                     }
 
                     // COLLISION(id) — poll collision queue for a specific object id.
@@ -899,10 +943,23 @@ class Compiler {
                     const u = window.AuthService.devCurrentUser();
                     return u ? u : '(no dev session)';
                 }
+                // Wallet (Stage 1) — see docs/OSaware Wallet.pdf.
+                if (nameU === 'WALLET$')         return this._walletDrv ? this._walletDrv.walletAddress()       : '';
+                if (nameU === 'WALLET.NETWORK$') return this._walletDrv ? this._walletDrv.walletNetworkName()   : '';
+                if (nameU === 'WALLET.SYMBOL$')  return this._walletDrv ? this._walletDrv.walletSymbol()        : '';
+                if (nameU === 'WALLET.TOKENS$')  return this._walletDrv ? this._walletDrv.walletTokensJoined()  : '';
 
                 // String built-in functions.
                 if (variableName.includes('(')) {
                     const upper = variableName.toUpperCase();
+
+                    // WALLET.TOKENSYMBOL$(i) — symbol of the i-th non-zero token.
+                    if (upper.startsWith('WALLET.TOKENSYMBOL$(')) {
+                        if (!this._walletDrv) return '';
+                        const arg = this.extractValue(variableName, 1);
+                        const idx = Math.floor(Number(this.evalCalc(arg, ASS_NUMBER)));
+                        return this._walletDrv.walletTokenSymbol(idx);
+                    }
 
                     if (upper.startsWith('ENVIRON$(')) {
                     const key = this.extractValue(variableName, 1).replace(/^"|"$/g,'');
@@ -1217,6 +1274,18 @@ class Compiler {
             if (!Number.isNaN(asNum) && s !== '') return isStrType ? String(asNum) : asNum;
         }
 
+        // OOP: handle obj.field / obj.method() BEFORE the flat lookup, so
+        // that PRINT'ing a method result (e.g. PRINT wallet.Address$())
+        // dispatches via the vtable instead of being misread as a string
+        // array variable named "wallet.Address$".
+        if (this._findToplevelMemberDot) {
+            const dotIdx = this._findToplevelMemberDot(s);
+            if (dotIdx >= 0 && typeof this._evalMemberExpr === 'function') {
+                const oopResult = this._evalMemberExpr(s, dotIdx, valType, 0);
+                if (oopResult !== undefined) return oopResult;
+            }
+        }
+
         // Variable or function call.
         // If ASS_ANY and the identifier ends with $ or is a known string function,
         // delegate to ASS_STRING so STR$(), LEFT$() etc. work correctly.
@@ -1372,7 +1441,8 @@ class Compiler {
             'TIMER','INKEY','SECONDS','RND','MOUSE','KEYDOWN',
             'COLLISION','WS.STATUS','CSRLIN','ERL','ERR',
             'GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
-            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','LINES','MAXLINE'
+            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','LINES','MAXLINE',
+            'WALLET','WALLET$','WALLET.CHAINID','WALLET.BALANCE','WALLET.CONNECTED','WALLET.NETWORK$','WALLET.SYMBOL$','WALLET.TOKENS$','WALLET.TOKENCOUNT'
         ]));
     }
 
@@ -1386,7 +1456,8 @@ class Compiler {
             'SCREENW','SCREENH','COLS','ROWS','WIDTH','HEIGHT',
             'LINES','MAXLINE','INKEY','RND','MOUSE','KEYDOWN','COLLISION',
             'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
-            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','PI','TRUE','FALSE'
+            'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','PI','TRUE','FALSE',
+            'WALLET.CHAINID','WALLET.BALANCE','WALLET.CONNECTED','WALLET.TOKENCOUNT'
         ]));
     }
 

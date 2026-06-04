@@ -853,8 +853,20 @@ class TerminalDriver {
 
         // GETKEY() waiting for a keypress.
         if (this.want_keypress) {
+            const code = which || (e.keyCode || 0);
             this.want_keypress = 0;
-            this.assign_(ASS_NUMBER, this.input_var, which || (e.keyCode || 0));
+            // Wallet picker / Y-N confirm — the wallet driver stores the
+            // callback on the HOST (Interpreter), not on the terminal driver.
+            // Read off this._host.
+            const host = this._host;
+            if (host && host._walletWaitingKey && typeof host._walletPickerCb === 'function') {
+                host._walletWaitingKey = false;
+                const cb = host._walletPickerCb;
+                host._walletPickerCb = null;
+                cb(code);
+                return false;
+            }
+            this.assign_(ASS_NUMBER, this.input_var, code);
             this.tick(1);
             return false;
         }
@@ -1310,7 +1322,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1780499963';
+                    return '1780577232';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,

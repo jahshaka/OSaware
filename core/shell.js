@@ -39,6 +39,8 @@ class ShellRuntime {
     set _trace(v)            { this._host._trace = v; }
     get _dimInfo()           { return this._host._dimInfo; }
     set _dimInfo(v)          { this._host._dimInfo = v; }
+    get _dimClass()          { return this._host._dimClass; }
+    set _dimClass(v)         { this._host._dimClass = v; }
     get _arrMax()            { return this._host._arrMax; }
     set _arrMax(v)           { this._host._arrMax = v; }
     get _labels()            { return this._host._labels; }

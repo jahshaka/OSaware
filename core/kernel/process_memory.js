@@ -93,6 +93,23 @@ class ProcessMemory {
         // ── Misc runtime state ─────────────────────────────────────────────
         this._trace         = false;
         this._rng_seed      = null;
+
+        // ── Wallet (Stage 1) — see docs/OSaware Wallet.pdf ─────────────────
+        // Process-local: each BASIC program must call WALLETCONNECT itself.
+        // The wallet extension's per-origin approval may persist on its side
+        // (revoke via WALLETDISCONNECT), but the BASIC-visible binding does
+        // NOT carry across program runs.
+        this._walletAddress         = '';
+        this._walletChainId         = 0;
+        this._walletProvider        = null;
+        this._walletPending         = false;
+        this._walletEvents          = null;
+        this._walletTokenCache      = new Map();
+        this._walletBalanceCache    = null;
+        this._walletBalanceFetching = false;
+        // Display flag: when 1, token-enumeration accessors include curated
+        // tokens with zero balance. Defaults off.
+        this._walletShowZero        = 0;
     }
 
     // Snapshot the variable heap (used by CALL to save/restore SUB scope)
