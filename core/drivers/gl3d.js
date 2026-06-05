@@ -126,7 +126,7 @@ class GL3DDriver {
             wireColor:  null,     // edge colour for SOLIDWIRE (null = auto)
             fog:        null,     // {r,g,b,near,far} or null
             emissive:   [0,0,0],  // emissive colour
-            smooth:     true,     // GL.SMOOTH — share verts/normals across faces
+            smooth:     1,        // GL.SMOOTH — 0 flat / 1 smooth / 2 inner-only
                                   //   true  → indexed geometry, computeVertexNormals
                                   //           averages → smooth shading.
                                   //   false → toNonIndexed expands each tri to its own
@@ -731,16 +731,22 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-    // GL.SMOOTH [n] — toggle smooth shading for subsequent built meshes.
-    // n=1 (default) → indexed geometry, vertex-normal averaging at corners
-    //                  gives smooth-shaded surfaces.
-    // n=0           → toNonIndexed expansion gives each triangle its own
-    //                  vertex normals → flat per-face shading (angular look
-    //                  preserved on sharp-cornered cross-sections).
+    // GL.SMOOTH [n] — three-state shading mode for subsequent built meshes:
+    //   n=0  flat   — toNonIndexed: every triangle owns its face normal; the
+    //                 whole cross-section reads as faceted.
+    //   n=1  smooth — indexed; computeVertexNormals averages at every shared
+    //                 vertex. Reads as a fully rounded surface even at 90°
+    //                 wall corners (current default).
+    //   n=2  inner  — auto-smooth: shape corners whose angle exceeds the
+    //                 threshold (≈30°) keep separate vertices so they stay
+    //                 hard; corners with a small angle change (the half-pipe
+    //                 transition arc) share vertices and read smooth. Best
+    //                 of both worlds for a half-pipe / I-beam profile.
     cmdGL_SMOOTH(param) {
         const g = this._glState();
         const p = this._glParseFloats(param, 1);
-        g.smooth = (p[0] === 0) ? false : true;
+        const v = (p[0] != null) ? (p[0] | 0) : 1;
+        g.smooth = Math.max(0, Math.min(2, v));
         return CMD_OK;
     }
 
@@ -3343,11 +3349,14 @@ void main() {
             const tension = (pathStyle === 2) ? 1.0 : 0.5;
             return new THREE.CatmullRomCurve3(v3s, closedPath, 'catmullrom', tension);
         }
-        // For Bezier (explicit-handle) paths, "curved" = much longer handles.
-        // 2x the chord/3 default → 2/3 of full chord per handle, which is
-        // about the point at which the cubic visibly swoops away from the
-        // chord without overshooting into self-intersections.
-        const hScale = (pathStyle === 2) ? 2.0 : 1.0;
+        // For Bezier (explicit-handle) paths, "curved" = somewhat longer
+        // handles. The baseline HSCALE the BASIC code computes is already
+        // chord/2; doubling it would push handles to ~chord-length, which
+        // overshoots p3 at high-curvature segments (lobe tips on a
+        // lemniscate) and the cubic folds into a cusp / pinch right at
+        // each anchor. 1.3 gives a noticeably bulgier curve than spline
+        // without crossing into overshoot territory.
+        const hScale = (pathStyle === 2) ? 1.3 : 1.0;
         const handleOf = (i) => {
             const p = pathPts[i];
             const t = typeOf(i);
@@ -3503,7 +3512,7 @@ void main() {
             const sv = shapePts.map(([x, y]) => new THREE.Vector2(x, y));
             const closedSv = sv.concat([sv[0].clone()]);
             const curve = new THREE.SplineCurve(closedSv);
-            const subdiv = (g.smooth === false) ? 2 : 6;
+            const subdiv = (g.smooth === 0) ? 2 : 6;
             shape2D = curve.getPoints(shapePts.length * subdiv);
         } else {
             // Polygon: corners as-is.
@@ -3540,7 +3549,7 @@ void main() {
         // its sign becomes noise — every regeneration flipped the cross-
         // section upside down at random. When the signed area is small
         // relative to the total absolute area we treat it as ambiguous and
-        // fall back to dir = -1 (the convention used by MADMAX shapes:
+        // fall back to dir = -1 (the convention used by TRACKBUILDER shapes:
         // negative shape.x = walls go up).
         let signedArea = 0;
         let absArea = 0;
@@ -3555,7 +3564,39 @@ void main() {
             ? ((signedArea > 0) ? -1 : 1)
             : -1;
 
-        const positions = new Float32Array(N * M * 3);
+        // GL.SMOOTH 2 = "inner" — auto-smooth only the small-angle shape
+        // corners (the arc transitions), keep the steep corners (wall /
+        // deck) angular. Detect sharp shape points and allocate TWO ring-
+        // vertices for each so the incoming and outgoing faces don't share
+        // a vertex (and so don't share a normal after computeVertexNormals).
+        const useInnerSmooth = (g.smooth === 2);
+        let isSharpJ = null;
+        let shapeIdxStart = null;
+        let Mexp = M;
+        if (useInnerSmooth) {
+            const sharpRad = 30 * Math.PI / 180;
+            isSharpJ = new Array(M);
+            for (let j = 0; j < M; j++) {
+                const jp = (j - 1 + M) % M;
+                const jn = (j + 1) % M;
+                const e1x = shape2D[j].x - shape2D[jp].x;
+                const e1y = shape2D[j].y - shape2D[jp].y;
+                const e2x = shape2D[jn].x - shape2D[j].x;
+                const e2y = shape2D[jn].y - shape2D[j].y;
+                const l1 = Math.hypot(e1x, e1y) || 1;
+                const l2 = Math.hypot(e2x, e2y) || 1;
+                const cosA = (e1x * e2x + e1y * e2y) / (l1 * l2);
+                isSharpJ[j] = Math.acos(Math.max(-1, Math.min(1, cosA))) > sharpRad;
+            }
+            shapeIdxStart = new Array(M);
+            Mexp = 0;
+            for (let j = 0; j < M; j++) {
+                shapeIdxStart[j] = Mexp;
+                Mexp += isSharpJ[j] ? 2 : 1;
+            }
+        }
+
+        const positions = new Float32Array(N * Mexp * 3);
         const tangent = new THREE.Vector3();
         const right   = new THREE.Vector3();
         for (let i = 0; i < N; i++) {
@@ -3564,35 +3605,46 @@ void main() {
             if (closedPath) { i0 = (i - 1 + N) % N; i1 = (i + 1) % N; }
             else            { i0 = Math.max(0, i - 1); i1 = Math.min(N - 1, i + 1); }
             tangent.subVectors(pathSamples[i1], pathSamples[i0]);
-            // right is the Frenet normal projected to XZ (the path is flat
-            // enough that we ignore tangent.y); `dir` flips it to point
-            // toward the loop centre on CW paths, matching ExtrudeGeometry.
             right.set(dir * tangent.z, 0, -dir * tangent.x);
             const rl = Math.hypot(right.x, right.z) || 1;
             right.x /= rl; right.z /= rl;
-            const base = i * M * 3;
+            const base = i * Mexp * 3;
             for (let j = 0; j < M; j++) {
                 const sv = shape2D[j];
-                const o = base + j * 3;
-                positions[o]     = P.x + right.x * sv.y;
-                positions[o + 1] = P.y + dir * sv.x;
-                positions[o + 2] = P.z + right.z * sv.y;
+                const px = P.x + right.x * sv.y;
+                const py = P.y + dir * sv.x;
+                const pz = P.z + right.z * sv.y;
+                const o0 = base + (useInnerSmooth ? shapeIdxStart[j] : j) * 3;
+                positions[o0]     = px;
+                positions[o0 + 1] = py;
+                positions[o0 + 2] = pz;
+                if (useInnerSmooth && isSharpJ[j]) {
+                    const o1 = o0 + 3;  // duplicate vertex (outgoing side)
+                    positions[o1]     = px;
+                    positions[o1 + 1] = py;
+                    positions[o1 + 2] = pz;
+                }
             }
         }
 
-        // Build quads with uniform winding. With `dir` applied to BOTH the
-        // up and right axes the local frame stays right-handed, so this
-        // index order gives outward-facing faces for both CW and CCW paths.
+        // For each shape segment j → j+1, the face uses the OUTGOING vertex
+        // of j (duplicate if sharp) and the INCOMING vertex of j+1 (the base
+        // one, sharp or not). In smooth/flat modes Mexp = M and these
+        // simplify to the original v00..v11 = i*M+j etc.
         const iMax = closedPath ? N : N - 1;
         const indices = [];
         for (let i = 0; i < iMax; i++) {
             const i2 = (i + 1) % N;
             for (let j = 0; j < M; j++) {
                 const j2 = (j + 1) % M;
-                const v00 = i  * M + j;
-                const v01 = i  * M + j2;
-                const v10 = i2 * M + j;
-                const v11 = i2 * M + j2;
+                const vjOut = useInnerSmooth
+                    ? shapeIdxStart[j] + (isSharpJ[j] ? 1 : 0)
+                    : j;
+                const vj2In = useInnerSmooth ? shapeIdxStart[j2] : j2;
+                const v00 = i  * Mexp + vjOut;
+                const v01 = i  * Mexp + vj2In;
+                const v10 = i2 * Mexp + vjOut;
+                const v11 = i2 * Mexp + vj2In;
                 indices.push(v00, v01, v11);
                 indices.push(v00, v11, v10);
             }
@@ -3602,9 +3654,9 @@ void main() {
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geo.setIndex(indices);
         // GL.SMOOTH 0 → expand to non-indexed so each triangle gets its own
-        // vertex normals and the sharp corners of a polygon cross-section
-        // read as flat faces instead of being averaged smooth.
-        if (g.smooth === false) geo = geo.toNonIndexed();
+        // face normal. (Mode 2 is already pre-split at the sharp corners so
+        // it skips this — the indexed geometry already keeps creases there.)
+        if (g.smooth === 0) geo = geo.toNonIndexed();
         geo.computeVertexNormals();
 
         const [r, gv, b] = g.colour;
@@ -3644,7 +3696,7 @@ void main() {
         const _t1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
         this._glProfileTag('extrude', _t1 - _t0, {
             shape: (shapeStyle === 1) ? 'spline' : 'polygon',
-            smooth: (g.smooth === false) ? 0 : 1,
+            smooth: g.smooth | 0,
             M, N,
             tris: (geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3) | 0,
         });
@@ -3662,7 +3714,7 @@ void main() {
             const m = g.meshes[id];
             if (!m || !m._threeObjects) continue;
             // Skip "helper / marker" meshes — lines (0 tris anyway), sphere
-            // & box primitives (typically waypoint markers like MADMAX's
+            // & box primitives (typically waypoint markers like TRACKBUILDER's
             // path-control cubes), particle systems. We want the count to
             // reflect the main rendered geometry, not the gizmos.
             if (m._isLine || m._isSphere || m._isParticles) continue;
