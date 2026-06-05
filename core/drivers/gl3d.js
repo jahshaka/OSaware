@@ -3263,15 +3263,129 @@ void main() {
         g._pathClosed = true;   // default closed; GL.PATHOPEN to override
         return CMD_OK;
     }
-// GL.PATHPT x, z [, y] — append one point to the current path. The third
-// argument is elevation; omitted means y=0 (flat on the ground plane).
-// Stored internally as [x, z, y] so 2-arg callers keep working unchanged.
+// GL.PATHPT x, z [, y] — append a SMOOTH (auto-tangent) anchor to the path.
+// Tangents at this point are derived Catmull-Rom-style from the neighbours
+// (mirrored handles). Stored as
+//   [x, z, y, hin_x, hin_z, hin_y, hout_x, hout_z, hout_y, type]
+// where type = 0 (auto). The 10-slot layout lets PATHPT / PATHBEZPT /
+// PATHLINPT mix freely on the same path; the curve builder picks per-
+// segment between LineCurve3 and CubicBezierCurve3 based on endpoint type.
     cmdGL_PATHPT(param) {
         const g = this._glState();
         if (!g._pathPoints) g._pathPoints = [];
         const p = this._glParseFloats(param, 3);
-        g._pathPoints.push([p[0] || 0, p[1] || 0, p[2] || 0]);
+        g._pathPoints.push([p[0]||0, p[1]||0, p[2]||0, 0,0,0, 0,0,0, 0]);
         return CMD_OK;
+    }
+// GL.PATHBEZPT x, z, y, hin_x, hin_z, hin_y, hout_x, hout_z, hout_y —
+// append an anchor with EXPLICIT in/out Bezier handles. Handles are
+// vectors FROM the anchor TO the Bezier control point. Mirrored handles
+// → C1-continuous smooth corner; asymmetric → directional curve shape.
+// Type = 1 (explicit-bezier).
+    cmdGL_PATHBEZPT(param) {
+        const g = this._glState();
+        if (!g._pathPoints) g._pathPoints = [];
+        const p = this._glParseFloats(param, 9);
+        g._pathPoints.push([
+            p[0]||0, p[1]||0, p[2]||0,
+            p[3]||0, p[4]||0, p[5]||0,
+            p[6]||0, p[7]||0, p[8]||0,
+            1
+        ]);
+        return CMD_OK;
+    }
+// GL.PATHLINPT x, z [, y] — append a LINEAR anchor. Segments touching this
+// point are rendered as straight lines; smooth neighbours don't curve into
+// or out of it. Use for hard corners / sharp turns / racetrack chicanes.
+// Type = 2 (linear). Mix freely with PATHPT and PATHBEZPT in the same path.
+    cmdGL_PATHLINPT(param) {
+        const g = this._glState();
+        if (!g._pathPoints) g._pathPoints = [];
+        const p = this._glParseFloats(param, 3);
+        g._pathPoints.push([p[0]||0, p[1]||0, p[2]||0, 0,0,0, 0,0,0, 2]);
+        return CMD_OK;
+    }
+
+    // _buildPathCurve — turn the buffered path-point list into a THREE.Curve
+    // for getPoint(t)/getPoints(N) sampling. Routing:
+    //   pathStyle 0 (polygon)     → CurvePath of LineCurve3 throughout.
+    //   no explicit per-pt types  → CatmullRomCurve3 (current default).
+    //   any pt is bezier OR lin   → CurvePath built per-segment:
+    //       segment endpoints are both smooth → CubicBezierCurve3 using
+    //         explicit handles (type 1) or auto-handles (type 0).
+    //       either endpoint linear (type 2)   → LineCurve3 — the linear
+    //         point breaks smoothness on both sides, matching the way
+    //         Blender's "vector" / sharp-corner handles work.
+    _buildPathCurve(pathPts, closedPath, pathStyle) {
+        const v3s = pathPts.map(p => new THREE.Vector3(p[0], p[2]||0, p[1]));
+        const N = v3s.length;
+        const typeOf = (i) => (pathPts[i].length > 9 ? (pathPts[i][9] | 0) : 0);
+        if (pathStyle === 0) {
+            const curve = new THREE.CurvePath();
+            const last = closedPath ? N : N - 1;
+            for (let i = 0; i < last; i++) {
+                curve.curves.push(new THREE.LineCurve3(v3s[i], v3s[(i + 1) % N]));
+            }
+            return curve;
+        }
+        let anyExplicit = false;
+        for (let i = 0; i < N; i++) {
+            if (typeOf(i) !== 0) { anyExplicit = true; break; }
+        }
+        if (!anyExplicit) {
+            // pathStyle 1 = spline  — Catmull-Rom, default tension 0.5.
+            // pathStyle 2 = curved  — tension cranked to 1.0 so the derived
+            //                         tangent magnitude DOUBLES, pushing
+            //                         the curve much further out between
+            //                         control points. (Lower tension would
+            //                         have done the opposite — straighter,
+            //                         which is what an earlier build did.)
+            const tension = (pathStyle === 2) ? 1.0 : 0.5;
+            return new THREE.CatmullRomCurve3(v3s, closedPath, 'catmullrom', tension);
+        }
+        // For Bezier (explicit-handle) paths, "curved" = much longer handles.
+        // 2x the chord/3 default → 2/3 of full chord per handle, which is
+        // about the point at which the cubic visibly swoops away from the
+        // chord without overshooting into self-intersections.
+        const hScale = (pathStyle === 2) ? 2.0 : 1.0;
+        const handleOf = (i) => {
+            const p = pathPts[i];
+            const t = typeOf(i);
+            if (t === 1) {
+                return {
+                    in:  new THREE.Vector3(p[3] * hScale, (p[5]||0) * hScale, p[4] * hScale),
+                    out: new THREE.Vector3(p[6] * hScale, (p[8]||0) * hScale, p[7] * hScale),
+                };
+            }
+            // type 0 (auto) — Catmull-Rom-style mirrored handle.
+            let iPrev, iNext;
+            if (closedPath) { iPrev = (i - 1 + N) % N; iNext = (i + 1) % N; }
+            else            { iPrev = Math.max(0, i - 1); iNext = Math.min(N - 1, i + 1); }
+            const tangent = new THREE.Vector3()
+                .subVectors(v3s[iNext], v3s[iPrev])
+                .multiplyScalar(hScale / 6);
+            return { in: tangent.clone().negate(), out: tangent };
+        };
+        const curve = new THREE.CurvePath();
+        const last = closedPath ? N : N - 1;
+        for (let i = 0; i < last; i++) {
+            const i2 = (i + 1) % N;
+            const a = v3s[i];
+            const b = v3s[i2];
+            if (typeOf(i) === 2 || typeOf(i2) === 2) {
+                curve.curves.push(new THREE.LineCurve3(a, b));
+                continue;
+            }
+            const ha = handleOf(i);
+            const hb = handleOf(i2);
+            curve.curves.push(new THREE.CubicBezierCurve3(
+                a,
+                a.clone().add(ha.out),
+                b.clone().add(hb.in),
+                b
+            ));
+        }
+        return curve;
     }
 // GL.PATHOPEN — mark the buffered path as open (last point does NOT loop
 // back to the first). Default is closed.
@@ -3299,19 +3413,20 @@ void main() {
             return CMD_OK;
         }
         const p = this._glParseFloats(param, 2);
-        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[0] || 1)));
+        // p[0] = pathStyle (0=lines, 1=spline, 2=tight). `|| 1` would treat
+        // an explicit 0 as missing — use null-coalescing-style check instead.
+        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[0] != null ? p[0] : 1)));
         const samplesPer = Math.max(2, Math.floor(p[1] || 16));
         const closed = g._pathClosed !== false;
 
-        const v3s = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
         let pts;
         if (pathStyle === 0) {
+            const v3s = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
             pts = v3s.slice();
             if (closed && v3s.length > 0) pts.push(v3s[0].clone());
         } else {
-            const crType = (pathStyle === 2) ? 'centripetal' : 'catmullrom';
-            const curve = new THREE.CatmullRomCurve3(v3s, closed, crType, 0.5);
-            pts = curve.getPoints(samplesPer * v3s.length);
+            const curve = this._buildPathCurve(pathPts, closed, pathStyle);
+            pts = curve.getPoints(samplesPer * pathPts.length);
         }
         const geo = new THREE.BufferGeometry().setFromPoints(pts);
 
@@ -3368,7 +3483,9 @@ void main() {
         }
         const p = this._glParseFloats(param, 4);
         const shapeStyle = Math.max(0, Math.min(2, Math.floor(p[0] || 0)));
-        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[1] || 1)));
+        // `|| 1` would treat an explicit pathStyle=0 (polygon) as missing
+        // and force spline. Check null/undefined explicitly so 0 sticks.
+        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[1] != null ? p[1] : 1)));
         const segsPer    = Math.max(4, Math.floor(p[2] || 32));
         const closedPath = g._pathClosed !== false;
 
@@ -3395,18 +3512,16 @@ void main() {
         const M = shape2D.length;
 
         // --- Resolve path to evenly-sampled 3D points ---
-        const v3s = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
         let pathSamples;
         if (pathStyle === 0) {
             // Polyline path — control points, no smoothing.
-            pathSamples = v3s.slice();
+            pathSamples = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
         } else {
-            const crType = (pathStyle === 2) ? 'centripetal' : 'catmullrom';
-            const curve = new THREE.CatmullRomCurve3(v3s, closedPath, crType, 0.5);
-            const N = segsPer * pathPts.length;
+            const curve = this._buildPathCurve(pathPts, closedPath, pathStyle);
+            const NS = segsPer * pathPts.length;
             pathSamples = [];
-            for (let i = 0; i < N; i++) {
-                pathSamples.push(curve.getPoint(i / N));
+            for (let i = 0; i < NS; i++) {
+                pathSamples.push(curve.getPoint(i / NS));
             }
             if (!closedPath) pathSamples.push(curve.getPoint(1));
         }

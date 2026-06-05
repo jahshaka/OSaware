@@ -3231,6 +3231,8 @@ class Interpreter {
         bus.on('gl.shapept',           (m) => gl.cmdGL_SHAPEPT(m.param));
         bus.on('gl.pathbegin',         ()  => gl.cmdGL_PATHBEGIN());
         bus.on('gl.pathpt',            (m) => gl.cmdGL_PATHPT(m.param));
+        bus.on('gl.pathbezpt',         (m) => gl.cmdGL_PATHBEZPT(m.param));
+        bus.on('gl.pathlinpt',         (m) => gl.cmdGL_PATHLINPT(m.param));
         bus.on('gl.pathopen',          ()  => gl.cmdGL_PATHOPEN());
         bus.on('gl.extrude',           (m) => gl.cmdGL_EXTRUDE(m.param));
         bus.on('gl.spline',            (m) => gl.cmdGL_SPLINE(m.param));
@@ -3395,6 +3397,8 @@ class Interpreter {
     cmdGL_SHAPEPT(p)           { return this.kernel.post({syscall:'gl.shapept',param:p}); }
     cmdGL_PATHBEGIN()          { return this.kernel.post({syscall:'gl.pathbegin'}); }
     cmdGL_PATHPT(p)            { return this.kernel.post({syscall:'gl.pathpt',param:p}); }
+    cmdGL_PATHBEZPT(p)         { return this.kernel.post({syscall:'gl.pathbezpt',param:p}); }
+    cmdGL_PATHLINPT(p)         { return this.kernel.post({syscall:'gl.pathlinpt',param:p}); }
     cmdGL_PATHOPEN()           { return this.kernel.post({syscall:'gl.pathopen'}); }
     cmdGL_EXTRUDE(p)           { return this.kernel.post({syscall:'gl.extrude',param:p}); }
     cmdGL_SPLINE(p)            { return this.kernel.post({syscall:'gl.spline',param:p}); }
@@ -4139,6 +4143,8 @@ class Interpreter {
             ['GL.SHAPEPT',     0,  (p) => this.cmdGL_SHAPEPT(p),       1],
             ['GL.PATHBEGIN',   0,  ()  => this.cmdGL_PATHBEGIN()],
             ['GL.PATHPT',      0,  (p) => this.cmdGL_PATHPT(p),        1],
+            ['GL.PATHBEZPT',   0,  (p) => this.cmdGL_PATHBEZPT(p),     1],
+            ['GL.PATHLINPT',   0,  (p) => this.cmdGL_PATHLINPT(p),     1],
             ['GL.PATHOPEN',    0,  ()  => this.cmdGL_PATHOPEN()],
             ['GL.EXTRUDE',     0,  (p) => this.cmdGL_EXTRUDE(p),       1],
             ['GL.SPLINE',      0,  (p) => this.cmdGL_SPLINE(p),        1],
