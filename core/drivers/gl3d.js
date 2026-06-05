@@ -126,6 +126,11 @@ class GL3DDriver {
             wireColor:  null,     // edge colour for SOLIDWIRE (null = auto)
             fog:        null,     // {r,g,b,near,far} or null
             emissive:   [0,0,0],  // emissive colour
+            smooth:     true,     // GL.SMOOTH — share verts/normals across faces
+                                  //   true  → indexed geometry, computeVertexNormals
+                                  //           averages → smooth shading.
+                                  //   false → toNonIndexed expands each tri to its own
+                                  //           verts → flat per-face shading.
             forceWire:  false,    // GL.WIREALL — render every mesh as unlit wireframe
         };
     }
@@ -153,9 +158,23 @@ class GL3DDriver {
         const H = wrapper.clientHeight || wrapper.offsetHeight || 600;
 
         // Three.js renderer
-        const renderer = new THREE.WebGLRenderer({ canvas: wc, antialias: true, alpha: true });
+        // logarithmicDepthBuffer drops the depth-precision falloff with
+        // distance — without it, a near=1, far=1000 frustum runs out of
+        // depth resolution past ~200 units and faraway geometry starts
+        // showing z-fighting / triangular tear artifacts. The constant
+        // cost (one extra fragment-shader instruction) is well worth it.
+        const renderer = new THREE.WebGLRenderer({ canvas: wc, antialias: true, alpha: true,
+            logarithmicDepthBuffer: true });
         renderer.setSize(W, H);
-        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        // Cap the effective pixel ratio. Retina (devicePixelRatio = 2) combined
+        // with antialias:true MSAA can quadruple fragment-shader cost vs 1.0
+        // — at the scale of a 25k-triangle PBR scene this is the dominant
+        // bottleneck on integrated/older GPUs even though the geometry is
+        // trivial. 1.5 retains crisp text without paying the full 4× fragment
+        // tax; programs that want pixel-perfect Retina can bump it back via
+        // GL.PIXELRATIO.
+        const _dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        renderer.setPixelRatio(_dpr);
         renderer.setClearColor(new THREE.Color(0, 0, 0), 1);
         renderer.sortObjects = true;
         renderer.shadowMap.enabled = true;
@@ -165,7 +184,10 @@ class GL3DDriver {
         const scene = new THREE.Scene();
 
         // Camera
-        const camera = new THREE.PerspectiveCamera(g.fov, W / H, 0.1, g.far || 1000);
+        // Near plane 1.0 (not 0.1) — keeps depth precision sane out to
+        // the default far=1000 even without log depth. Programs that need
+        // sub-unit-scale geometry can lower it via GL.PERSPECTIVE.
+        const camera = new THREE.PerspectiveCamera(g.fov, W / H, 1.0, g.far || 1000);
         const [cx,cy,cz] = g.cam;
         const [lx,ly,lz] = g.lookat;
         camera.position.set(cx, cy, cz);
@@ -616,6 +638,8 @@ class GL3DDriver {
     cmdGL_WIRE()      { this._glState().mode = 'wire';      return CMD_OK; }
     cmdGL_SOLID()     { this._glState().mode = 'solid';     return CMD_OK; }
     cmdGL_SOLIDWIRE() { this._glState().mode = 'solidwire'; return CMD_OK; }
+    // GL.UNLIT — flat-colored mesh, no lighting calc (MeshBasicMaterial).
+    cmdGL_UNLIT()     { this._glState().mode = 'unlit';     return CMD_OK; }
 
     // GL.WIREALL flag — 1: render every mesh in the scene as a wireframe with no
     // lighting (full ambient, directional light off);  0: restore shading + lights.
@@ -656,6 +680,44 @@ class GL3DDriver {
         if (g.three) {
             g.three.dirLight.position.set(g.light[0], g.light[1], g.light[2]);
             g.three.dirLight.intensity = (p[3] !== undefined) ? p[3] : (1 - g.ambient) * 0.7;
+        }
+        return CMD_OK;
+    }
+
+    // GL.SMOOTH [n] — toggle smooth shading for subsequent built meshes.
+    // n=1 (default) → indexed geometry, vertex-normal averaging at corners
+    //                  gives smooth-shaded surfaces.
+    // n=0           → toNonIndexed expansion gives each triangle its own
+    //                  vertex normals → flat per-face shading (angular look
+    //                  preserved on sharp-cornered cross-sections).
+    cmdGL_SMOOTH(param) {
+        const g = this._glState();
+        const p = this._glParseFloats(param, 1);
+        g.smooth = (p[0] === 0) ? false : true;
+        return CMD_OK;
+    }
+
+    // GL.PIXELRATIO ratio — set the renderer's effective pixel ratio. Lower
+    // values render fewer fragments (faster on big screens / Retina); higher
+    // values render sharper text + edges at fragment-shader cost. Clamped
+    // to [0.25, devicePixelRatio]. Pass 0 to restore the engine default cap.
+    cmdGL_PIXELRATIO(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const p = this._glParseFloats(param, 1);
+        const max = window.devicePixelRatio || 1;
+        let r = (p[0] && p[0] > 0) ? p[0] : Math.min(max, 1.5);
+        r = Math.max(0.25, Math.min(r, max));
+        t.renderer.setPixelRatio(r);
+        const wrapper = document.getElementById('terminal-wrapper');
+        if (wrapper) {
+            const W = wrapper.clientWidth, H = wrapper.clientHeight;
+            if (W > 0 && H > 0) {
+                t.renderer.setSize(W, H);
+                t.camera.aspect = W / H;
+                t.camera.updateProjectionMatrix();
+            }
         }
         return CMD_OK;
     }
@@ -1401,7 +1463,14 @@ class GL3DDriver {
         if (!t) return CMD_OK;
         for (const m of Object.values(g.meshes)) {
             if (!m._threeObjects || m._builtMode !== g.mode) {
-                if (!m._isSphere && !m._isChrome && !m._isTemplate) this._glSyncMesh(m, g);
+                // Self-contained meshes own their THREE objects directly and
+                // must not be re-routed through the verts/faces builder — that
+                // would discard the spline line, particle system, sphere, etc.
+                // and replace them with an empty BufferGeometry.
+                if (!m._isSphere && !m._isChrome && !m._isTemplate
+                    && !m._isLine && !m._isParticles && !m._isLoaded) {
+                    this._glSyncMesh(m, g);
+                }
             }
         }
         this._glSyncCanvas();
@@ -3001,6 +3070,496 @@ void main() {
             shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
             tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
+        g.meshes[id] = fakeMesh;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+// GL.SHAPEBEGIN — start a new 2D cross-section (the profile that gets
+// extruded along the path). Clears any previously-buffered shape points.
+// Pair with GL.SHAPEPT to fill in corners.
+    cmdGL_SHAPEBEGIN() {
+        const g = this._glState();
+        g._shapePoints = [];
+        return CMD_OK;
+    }
+// GL.SHAPEPT x, y — append one 2D corner to the current shape. X is
+// vertical (wall height direction), Y is lateral (track width direction).
+// This mapping is enforced by ExtrudeGeometry's frame: shape +X → curve
+// binormal (= world +Y for flat curves), shape +Y → curve normal.
+    cmdGL_SHAPEPT(param) {
+        const g = this._glState();
+        if (!g._shapePoints) g._shapePoints = [];
+        const p = this._glParseFloats(param, 2);
+        g._shapePoints.push([p[0] || 0, p[1] || 0]);
+        return CMD_OK;
+    }
+
+// GL.PATHBEGIN — start a new 2D path (XZ-plane points). Clears any
+// previously-buffered points. Pair with GL.PATHPT to fill in points and
+// GL.EXTRUDE (or GL.TRACK) to build the mesh.
+    cmdGL_PATHBEGIN() {
+        const g = this._glState();
+        g._pathPoints = [];
+        g._pathClosed = true;   // default closed; GL.PATHOPEN to override
+        return CMD_OK;
+    }
+// GL.PATHPT x, z [, y] — append one point to the current path. The third
+// argument is elevation; omitted means y=0 (flat on the ground plane).
+// Stored internally as [x, z, y] so 2-arg callers keep working unchanged.
+    cmdGL_PATHPT(param) {
+        const g = this._glState();
+        if (!g._pathPoints) g._pathPoints = [];
+        const p = this._glParseFloats(param, 3);
+        g._pathPoints.push([p[0] || 0, p[1] || 0, p[2] || 0]);
+        return CMD_OK;
+    }
+// GL.PATHOPEN — mark the buffered path as open (last point does NOT loop
+// back to the first). Default is closed.
+    cmdGL_PATHOPEN() {
+        const g = this._glState();
+        g._pathClosed = false;
+        return CMD_OK;
+    }
+// GL.SPLINE pathStyle [, samplesPerControl]
+// — render the buffered path as a 3D polyline (THREE.Line). No extrusion,
+// no thickness — cheap and pixel-thin regardless of camera distance.
+//
+//   pathStyle  0 = straight segments between control points (polyline)
+//              1 = Catmull-Rom spline (default)
+//              2 = centripetal Catmull-Rom (tight, less overshoot)
+//
+// Uses current GL.COLOUR / GL.ALPHA. Material is LineBasicMaterial (unlit).
+    cmdGL_SPLINE(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const pathPts = g._pathPoints || [];
+        if (pathPts.length < 2) {
+            this.appendLine('GL.SPLINE needs at least 2 path points', 1);
+            return CMD_OK;
+        }
+        const p = this._glParseFloats(param, 2);
+        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[0] || 1)));
+        const samplesPer = Math.max(2, Math.floor(p[1] || 16));
+        const closed = g._pathClosed !== false;
+
+        const v3s = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
+        let pts;
+        if (pathStyle === 0) {
+            pts = v3s.slice();
+            if (closed && v3s.length > 0) pts.push(v3s[0].clone());
+        } else {
+            const crType = (pathStyle === 2) ? 'centripetal' : 'catmullrom';
+            const curve = new THREE.CatmullRomCurve3(v3s, closed, crType, 0.5);
+            pts = curve.getPoints(samplesPer * v3s.length);
+        }
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+
+        const [r, gv, b] = g.colour;
+        const color = new THREE.Color(r/255, gv/255, b/255);
+        const opacity = g.alpha;
+        const transparent = opacity < 1.0;
+        const mat = new THREE.LineBasicMaterial({ color, transparent, opacity });
+
+        const line = new THREE.Line(geo, mat);
+        line.castShadow    = false;
+        line.receiveShadow = false;
+        t.scene.add(line);
+
+        const id = g.nextId++;
+        const fakeMesh = { id, verts:[], faces:[], colour:[r,gv,b],
+            shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
+            tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
+            _threeObjects:[line], _builtMode: 'line', _isLine: true };
+        g.meshes[id] = fakeMesh;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+// GL.EXTRUDE shapeStyle, pathStyle [, segsPerControl [, hollowInset]]
+// — extrude the buffered cross-section (GL.SHAPEBEGIN+GL.SHAPEPT) along
+// the buffered path (GL.PATHBEGIN+GL.PATHPT). Two independent splines,
+// two independent styles.
+//
+//   shapeStyle  0 = polygon (sharp lines between corners)
+//               1 = spline  (Catmull-Rom through corners — smooth)
+//               2 = hollow  (polygon outer + inner offset → channel)
+//
+//   pathStyle   0 = polygon (straight segments between control points)
+//               1 = spline  (Catmull-Rom — smooth, default)
+//               2 = spline-tight (centripetal Catmull-Rom — less overshoot)
+//
+//   hollowInset (shapeStyle 2 only) — distance the inner hole is offset
+//               inward from the outer outline. Default 0.4.
+    cmdGL_EXTRUDE(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const shapePts = g._shapePoints || [];
+        const pathPts  = g._pathPoints  || [];
+        if (shapePts.length < 3) {
+            this.appendLine('GL.EXTRUDE needs at least 3 shape points (GL.SHAPEPT)', 1);
+            return CMD_OK;
+        }
+        if (pathPts.length < 3) {
+            this.appendLine('GL.EXTRUDE needs at least 3 path points (GL.PATHPT)', 1);
+            return CMD_OK;
+        }
+        const p = this._glParseFloats(param, 4);
+        const shapeStyle = Math.max(0, Math.min(2, Math.floor(p[0] || 0)));
+        const pathStyle  = Math.max(0, Math.min(2, Math.floor(p[1] || 1)));
+        const segsPer    = Math.max(4, Math.floor(p[2] || 32));
+        const closedPath = g._pathClosed !== false;
+
+        // --- Resolve shape to a CLOSED 2D polyline (no triangulation needed;
+        //     we sweep an OPEN outline along the path and connect end-to-end).
+        let shape2D;
+        if (shapeStyle === 1) {
+            // Catmull-Rom through corners. Subdivision count depends on the
+            // shading mode: with smooth shading we want fine sampling so the
+            // averaged vertex normals trace a clean curve; with flat shading
+            // we coarsen on purpose so each face is large enough that its
+            // distinct face normal reads as a visible facet — otherwise
+            // GL.SMOOTH 0 looks identical to GL.SMOOTH 1 on a finely-sampled
+            // curve.
+            const sv = shapePts.map(([x, y]) => new THREE.Vector2(x, y));
+            const closedSv = sv.concat([sv[0].clone()]);
+            const curve = new THREE.SplineCurve(closedSv);
+            const subdiv = (g.smooth === false) ? 2 : 6;
+            shape2D = curve.getPoints(shapePts.length * subdiv);
+        } else {
+            // Polygon: corners as-is.
+            shape2D = shapePts.map(([x, y]) => new THREE.Vector2(x, y));
+        }
+        const M = shape2D.length;
+
+        // --- Resolve path to evenly-sampled 3D points ---
+        const v3s = pathPts.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
+        let pathSamples;
+        if (pathStyle === 0) {
+            // Polyline path — control points, no smoothing.
+            pathSamples = v3s.slice();
+        } else {
+            const crType = (pathStyle === 2) ? 'centripetal' : 'catmullrom';
+            const curve = new THREE.CatmullRomCurve3(v3s, closedPath, crType, 0.5);
+            const N = segsPer * pathPts.length;
+            pathSamples = [];
+            for (let i = 0; i < N; i++) {
+                pathSamples.push(curve.getPoint(i / N));
+            }
+            if (!closedPath) pathSamples.push(curve.getPoint(1));
+        }
+        const N = pathSamples.length;
+
+        // --- Manual sweep ---
+        // shape.x → binormal axis (vertical), shape.y → normal axis (lateral).
+        // We mirror Three.js ExtrudeGeometry's convention so existing cross-
+        // section authoring (negative shape.x for "wall depth" on a CW path)
+        // keeps working: for closed paths in the XZ plane the Frenet binormal
+        // points -Y on a CW traversal and +Y on a CCW traversal. We pick the
+        // sign once per call from the path's signed XZ area.
+        let signedArea = 0;
+        for (let i = 0; i < N; i++) {
+            const p1 = pathSamples[i];
+            const p2 = pathSamples[(i + 1) % N];
+            signedArea += p1.x * p2.z - p2.x * p1.z;
+        }
+        const dir = (signedArea > 0) ? -1 : 1;
+
+        const positions = new Float32Array(N * M * 3);
+        const tangent = new THREE.Vector3();
+        const right   = new THREE.Vector3();
+        for (let i = 0; i < N; i++) {
+            const P = pathSamples[i];
+            let i0, i1;
+            if (closedPath) { i0 = (i - 1 + N) % N; i1 = (i + 1) % N; }
+            else            { i0 = Math.max(0, i - 1); i1 = Math.min(N - 1, i + 1); }
+            tangent.subVectors(pathSamples[i1], pathSamples[i0]);
+            // right is the Frenet normal projected to XZ (the path is flat
+            // enough that we ignore tangent.y); `dir` flips it to point
+            // toward the loop centre on CW paths, matching ExtrudeGeometry.
+            right.set(dir * tangent.z, 0, -dir * tangent.x);
+            const rl = Math.hypot(right.x, right.z) || 1;
+            right.x /= rl; right.z /= rl;
+            const base = i * M * 3;
+            for (let j = 0; j < M; j++) {
+                const sv = shape2D[j];
+                const o = base + j * 3;
+                positions[o]     = P.x + right.x * sv.y;
+                positions[o + 1] = P.y + dir * sv.x;
+                positions[o + 2] = P.z + right.z * sv.y;
+            }
+        }
+
+        // Build quads with uniform winding. With `dir` applied to BOTH the
+        // up and right axes the local frame stays right-handed, so this
+        // index order gives outward-facing faces for both CW and CCW paths.
+        const iMax = closedPath ? N : N - 1;
+        const indices = [];
+        for (let i = 0; i < iMax; i++) {
+            const i2 = (i + 1) % N;
+            for (let j = 0; j < M; j++) {
+                const j2 = (j + 1) % M;
+                const v00 = i  * M + j;
+                const v01 = i  * M + j2;
+                const v10 = i2 * M + j;
+                const v11 = i2 * M + j2;
+                indices.push(v00, v01, v11);
+                indices.push(v00, v11, v10);
+            }
+        }
+
+        let geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setIndex(indices);
+        // GL.SMOOTH 0 → expand to non-indexed so each triangle gets its own
+        // vertex normals and the sharp corners of a polygon cross-section
+        // read as flat faces instead of being averaged smooth.
+        if (g.smooth === false) geo = geo.toNonIndexed();
+        geo.computeVertexNormals();
+
+        const [r, gv, b] = g.colour;
+        const color = new THREE.Color(r/255, gv/255, b/255);
+        const opacity = g.alpha;
+        const transparent = opacity < 1.0;
+        let mat;
+        if (g.mode === 'wire') {
+            mat = new THREE.MeshBasicMaterial({ color, wireframe: true,
+                side: THREE.DoubleSide, transparent, opacity });
+        } else if (g.mode === 'unlit') {
+            mat = new THREE.MeshBasicMaterial({ color, wireframe: false,
+                side: THREE.DoubleSide, transparent, opacity });
+        } else {
+            // Lambert (pure diffuse) for a matte, rough look — no specular
+            // highlights. MeshPhongMaterial here was generating the "blown
+            // out" bright rim under the directional light; Lambert ignores
+            // shininess entirely and is also cheaper to shade.
+            mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide,
+                transparent, opacity,
+                emissive: new THREE.Color(g.emissive[0]/255, g.emissive[1]/255, g.emissive[2]/255),
+                depthWrite: !transparent });
+        }
+
+        const mesh3 = new THREE.Mesh(geo, mat);
+        mesh3.castShadow    = true;
+        mesh3.receiveShadow = true;
+        t.scene.add(mesh3);
+
+        const id = g.nextId++;
+        const fakeMesh = { id, verts:[], faces:[], colour:[r,gv,b],
+            shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
+            tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
+            _threeObjects:[mesh3], _builtMode: g.mode };
+        g.meshes[id] = fakeMesh;
+        g.lastId = id;
+        return CMD_OK;
+    }
+
+    // _glPolyCount / _glVertCount — sum of visible triangle / vertex counts
+    // across all GL meshes in the scene. Used by GL.POLYS / GL.VERTS so
+    // BASIC overlays can report how much geometry the renderer is pushing.
+    _glPolyCount() {
+        const g = this._gl;
+        if (!g || !g.meshes) return 0;
+        let total = 0;
+        for (const id in g.meshes) {
+            const m = g.meshes[id];
+            if (!m || !m._threeObjects) continue;
+            for (const obj of m._threeObjects) {
+                if (!obj || obj.visible === false) continue;
+                if (obj.isLine || obj.isPoints) continue;
+                const geo = obj.geometry;
+                if (!geo) continue;
+                if (geo.index) total += geo.index.count / 3;
+                else if (geo.attributes && geo.attributes.position) total += geo.attributes.position.count / 3;
+            }
+        }
+        return Math.floor(total);
+    }
+    _glVertCount() {
+        const g = this._gl;
+        if (!g || !g.meshes) return 0;
+        let total = 0;
+        for (const id in g.meshes) {
+            const m = g.meshes[id];
+            if (!m || !m._threeObjects) continue;
+            for (const obj of m._threeObjects) {
+                if (!obj || obj.visible === false) continue;
+                const geo = obj.geometry;
+                if (!geo || !geo.attributes || !geo.attributes.position) continue;
+                total += geo.attributes.position.count;
+            }
+        }
+        return total;
+    }
+
+    // _mergeVertices — collapse positions that fall within `tol` of each
+    // other into a single shared index. ExtrudeGeometry leaves the side-wall
+    // faces' vertices unshared at each step boundary, so without this pass
+    // computeVertexNormals can't smooth across faces (each triangle keeps
+    // its face normal → flat-shaded striping).
+    _mergeVertices(geo, tol) {
+        const pos = geo.attributes.position;
+        if (!pos) return geo;
+        const positions = pos.array;
+        const invTol = 1 / tol;
+        const hashToIndex = new Map();
+        const newPositions = [];
+        const newIndices = [];
+        const srcIndices = geo.index ? geo.index.array : null;
+        const vertCount = srcIndices ? srcIndices.length : (positions.length / 3);
+        for (let i = 0; i < vertCount; i++) {
+            const srcVertIdx = srcIndices ? srcIndices[i] : i;
+            const o = srcVertIdx * 3;
+            const x = positions[o], y = positions[o + 1], z = positions[o + 2];
+            const key = (Math.round(x * invTol) | 0) + ',' +
+                        (Math.round(y * invTol) | 0) + ',' +
+                        (Math.round(z * invTol) | 0);
+            let newIdx = hashToIndex.get(key);
+            if (newIdx === undefined) {
+                newIdx = newPositions.length / 3;
+                newPositions.push(x, y, z);
+                hashToIndex.set(key, newIdx);
+            }
+            newIndices.push(newIdx);
+        }
+        const out = new THREE.BufferGeometry();
+        out.setAttribute('position', new THREE.Float32BufferAttribute(newPositions, 3));
+        out.setIndex(newIndices);
+        return out;
+    }
+
+    // _inset2D — compute a polygon offset inward by `d`. Each corner moves
+    // along the average of its two adjacent edge inward-normals. Naive but
+    // adequate for convex/mildly concave shapes like the horseshoe.
+    _inset2D(pts, d) {
+        const n = pts.length;
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const a = pts[(i - 1 + n) % n];
+            const b = pts[i];
+            const c = pts[(i + 1) % n];
+            const e1x = b[0] - a[0], e1y = b[1] - a[1];
+            const e2x = c[0] - b[0], e2y = c[1] - b[1];
+            const l1 = Math.hypot(e1x, e1y) || 1;
+            const l2 = Math.hypot(e2x, e2y) || 1;
+            // Inward normals (rotate edge 90° CW for CCW-traced shapes;
+            // sign matches our horseshoe trace).
+            const n1x =  e1y / l1, n1y = -e1x / l1;
+            const n2x =  e2y / l2, n2y = -e2x / l2;
+            let nx = (n1x + n2x), ny = (n1y + n2y);
+            const ln = Math.hypot(nx, ny) || 1;
+            nx /= ln; ny /= ln;
+            // Miter-length correction so corners stay near distance d.
+            const dot = n1x * nx + n1y * ny;
+            const k = (dot !== 0) ? d / dot : d;
+            out.push([b[0] + nx * k, b[1] + ny * k]);
+        }
+        return out;
+    }
+
+// GL.TRACK width, wallHeight [, wallThickness [, segmentsPerControl]]
+// — extrude a horseshoe cross-section along a Catmull-Rom spline through
+// the buffered path points. Single mesh, smooth, continuous. The road
+// surface is at y=0; walls rise wallHeight above it on both sides.
+// Sets GL.MESHID to the resulting mesh.
+    cmdGL_TRACK(param) {
+        const g = this._glState();
+        const t = g.three || this._glSetupThree();
+        if (!t) return CMD_OK;
+        const points = g._pathPoints || [];
+        if (points.length < 3) {
+            this.appendLine('GL.TRACK needs at least 3 path points', 1);
+            return CMD_OK;
+        }
+        const p = this._glParseFloats(param, 5);
+        const W       = (p[0] || 0) / 2;          // half-width of road
+        const wallH   = p[1] || 1.5;
+        const wallT   = p[2] || 0.5;              // wall thickness
+        const segsPer = Math.max(4, Math.floor(p[3] || 32));
+        // Cross-section style. _glParseFloats zero-fills, so distinguish
+        // "no 5th arg" (default curved) from "explicit 0" (sharp U-beam)
+        // by counting commas in the raw param.
+        const commaCount = ((param || '').match(/,/g) || []).length;
+        const hasStyleArg = commaCount >= 4;
+        const styleCurved = hasStyleArg ? (Number(p[4]) !== 0) : true;
+
+        // Build the closed Catmull-Rom curve through path points. Stored as
+        // [x, z, y]; rebuild as THREE.Vector3(x, y, z) so the elevation arg
+        // raises/lowers segments out of the ground plane.
+        const v3s = points.map(([x, z, y]) => new THREE.Vector3(x, y || 0, z));
+        const curve = new THREE.CatmullRomCurve3(v3s, g._pathClosed !== false, 'catmullrom', 0.5);
+
+        // Horseshoe cross-section as a CLOSED 2D spline (Catmull-Rom).
+        // 8 corner control points; the spline rounds the joints smoothly.
+        // ExtrudeGeometry's extrudePath maps shape +X to the curve's
+        // binormal (world +Y for a flat XZ curve) and +Y to the curve's
+        // normal (in the XZ plane), so OUR +X here is VERTICAL (wall
+        // height) and +Y is LATERAL (track width).
+        //
+        //   wallH  ┌──┐         ┌──┐
+        //         │  │_________│  │
+        //         └──┘  road   └──┘
+        //         -W-wallT    +W+wallT
+        //
+        // The last duplicated point gives the closing-segment spline
+        // enough lookahead to land smoothly back at the start.
+        const corners = [
+            [0,     -W - wallT],
+            [wallH, -W - wallT],
+            [wallH, -W],
+            [0,     -W],
+            [0,      W],
+            [wallH,  W],
+            [wallH,  W + wallT],
+            [0,      W + wallT],
+        ];
+        const shape = new THREE.Shape();
+        shape.moveTo(corners[0][0], corners[0][1]);
+        if (styleCurved) {
+            // splineThru with the duplicated first point closes the spline
+            // smoothly back to the start.
+            const pts = corners.slice(1).map(([x, y]) => new THREE.Vector2(x, y));
+            pts.push(new THREE.Vector2(corners[0][0], corners[0][1]));
+            shape.splineThru(pts);
+        } else {
+            // Sharp 90° corners — straight line segments between every pair.
+            for (let ci = 1; ci < corners.length; ci++) {
+                shape.lineTo(corners[ci][0], corners[ci][1]);
+            }
+            shape.lineTo(corners[0][0], corners[0][1]);
+        }
+
+        const steps = segsPer * points.length;
+        const geo = new THREE.ExtrudeGeometry(shape, {
+            steps,
+            bevelEnabled: false,
+            extrudePath: curve,
+        });
+        geo.computeVertexNormals();
+
+        const [r, gv, b] = g.colour;
+        const color = new THREE.Color(r/255, gv/255, b/255);
+        const opacity = g.alpha;
+        const transparent = opacity < 1.0;
+        const mat = (g.mode === 'wire')
+            ? new THREE.MeshBasicMaterial({ color, wireframe: true, transparent, opacity })
+            : new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide,
+                shininess: g.shine, transparent, opacity,
+                emissive: new THREE.Color(g.emissive[0]/255, g.emissive[1]/255, g.emissive[2]/255),
+                depthWrite: !transparent });
+
+        const mesh3 = new THREE.Mesh(geo, mat);
+        mesh3.castShadow    = true;
+        mesh3.receiveShadow = true;
+        t.scene.add(mesh3);
+
+        const id = g.nextId++;
+        const fakeMesh = { id, verts:[], faces:[], colour:[r,gv,b],
+            shine:g.shine, alpha:g.alpha, emissive:[...g.emissive],
+            tx:0,ty:0,tz:0, rx:0,ry:0,rz:0, sx:1,sy:1,sz:1,
+            _threeObjects:[mesh3], _builtMode: g.mode };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
         return CMD_OK;

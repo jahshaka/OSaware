@@ -133,6 +133,7 @@ class TerminalDriver {
             x: 0, y: 0, btn: 0,
             pressX: 0, pressY: 0, releaseX: 0, releaseY: 0,
             lastClickTime: 0, pending: 0,
+            wheel: 0,  // accumulated wheel delta; read+cleared via MOUSE(7)
         };
         this._mouseEnabled = 0;
         this._mouseGosub   = -1;
@@ -1237,6 +1238,17 @@ class TerminalDriver {
         mouseTarget.addEventListener('mouseleave', () => {
             if (this._mouse.btn === -1) this._mouse.btn = 0;
         }, { passive: true });
+        // Wheel events accumulate into _mouse.wheel. Each tick of the wheel
+        // (one notch) maps to ±1; BASIC programs read+clear via MOUSE(7).
+        // Only swallow the page-scroll default when the program has the
+        // mouse trapped (MOUSE ON) so the page doesn't get hijacked
+        // otherwise.
+        mouseTarget.addEventListener('wheel', (e) => {
+            const step = e.deltaY < 0 ? 1 : (e.deltaY > 0 ? -1 : 0);
+            if (step === 0) return;
+            this._mouse.wheel = (this._mouse.wheel || 0) + step;
+            if (this._mouseEnabled === 1) e.preventDefault();
+        }, { passive: false });
 
         // ── Touch → Mouse mapping (tablet & touchscreen support) ─────────
         // Converts touch events to the same _mouse state that BASIC reads,
@@ -1322,7 +1334,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1780577232';
+                    return '1780663413';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,

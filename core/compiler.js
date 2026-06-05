@@ -684,6 +684,8 @@ class Compiler {
                         return (Object.keys(this._keysHeld || {}).length > 0) ? 1 : 0;
                     }
                     case 'GL.MESHID': return this._gl ? (this._gl.lastId || 0) : 0;
+                    case 'GL.POLYS':  return (this._glDrv && this._glDrv._glPolyCount) ? this._glDrv._glPolyCount() : 0;
+                    case 'GL.VERTS':  return (this._glDrv && this._glDrv._glVertCount) ? this._glDrv._glVertCount() : 0;
                     case 'GL.PROBEY': return this._gl ? (this._gl._probeY || 0) : 0;
                     case 'GL.SCANY':  return this._gl ? (this._gl._scanY || 0) : 0;
                     case 'GL.SCAND':  return this._gl ? (this._gl._scanD || 0) : 0;
@@ -869,6 +871,14 @@ class Compiler {
                             case 4: return m.pressY || 0;  // press start Y
                             case 5: return m.releaseX || 0; // release/current X
                             case 6: return m.releaseY || 0; // release/current Y
+                            case 7: {
+                                // Wheel delta accumulated since last read.
+                                // Positive = scrolled up / forward / "in".
+                                // Negative = scrolled down / backward / "out".
+                                const w = m.wheel || 0;
+                                m.wheel = 0;
+                                return w;
+                            }
                             default: return 0;
                         }
                     }
@@ -1440,7 +1450,7 @@ class Compiler {
         return _VOLATILE_SET || (_VOLATILE_SET = new Set([
             'TIMER','INKEY','SECONDS','RND','MOUSE','KEYDOWN',
             'COLLISION','WS.STATUS','CSRLIN','ERL','ERR',
-            'GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
+            'GL.MESHID','GL.POLYS','GL.VERTS','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
             'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','LINES','MAXLINE',
             'WALLET','WALLET$','WALLET.CHAINID','WALLET.BALANCE','WALLET.CONNECTED','WALLET.NETWORK$','WALLET.SYMBOL$','WALLET.TOKENS$','WALLET.TOKENCOUNT'
         ]));
@@ -1455,7 +1465,7 @@ class Compiler {
             'UPTIME','SECONDS','TIMER','WS.STATUS','WINDOW.PID','DEVICE',
             'SCREENW','SCREENH','COLS','ROWS','WIDTH','HEIGHT',
             'LINES','MAXLINE','INKEY','RND','MOUSE','KEYDOWN','COLLISION',
-            'CSRLIN','ERL','ERR','GL.MESHID','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
+            'CSRLIN','ERL','ERR','GL.MESHID','GL.POLYS','GL.VERTS','GL.PROBEY','GL.SCANY','GL.SCAND','GL.SCANS','GL.HITID','GL.HITDIST','GL.OBSTID',
             'AIG_YAW','AIG_PITCH','AIG_BOOST','AIG_SEV','PI','TRUE','FALSE',
             'WALLET.CHAINID','WALLET.BALANCE','WALLET.CONNECTED','WALLET.TOKENCOUNT'
         ]));

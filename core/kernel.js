@@ -3158,10 +3158,13 @@ class Interpreter {
         bus.on('gl.wire',              ()  => gl.cmdGL_WIRE());
         bus.on('gl.solid',             ()  => gl.cmdGL_SOLID());
         bus.on('gl.solidwire',         ()  => gl.cmdGL_SOLIDWIRE());
+        bus.on('gl.unlit',             ()  => gl.cmdGL_UNLIT());
         bus.on('gl.wireall',           (m) => gl.cmdGL_WIREALL(m.param));
         bus.on('gl.light',             (m) => gl.cmdGL_LIGHT(m.param));
         bus.on('gl.lightoff',          ()  => gl.cmdGL_LIGHTOFF());
         bus.on('gl.ambient',           (m) => gl.cmdGL_AMBIENT(m.param));
+        bus.on('gl.pixelratio',        (m) => gl.cmdGL_PIXELRATIO(m.param));
+        bus.on('gl.smooth',            (m) => gl.cmdGL_SMOOTH(m.param));
         bus.on('gl.bloom',             (m) => gl.cmdGL_BLOOM(m.param));
         bus.on('gl.fps',               (m) => gl.cmdGL_FPS(m.param));
         bus.on('gl.rfps',              (m) => gl.cmdGL_RFPS(m.param));
@@ -3222,6 +3225,14 @@ class Interpreter {
         bus.on('gl.box',               (m) => gl.cmdGL_BOX(m.param));
         bus.on('gl.cylinder',          (m) => gl.cmdGL_CYLINDER(m.param));
         bus.on('gl.polyhedron',        (m) => gl.cmdGL_POLYHEDRON(m.param));
+        bus.on('gl.shapebegin',        ()  => gl.cmdGL_SHAPEBEGIN());
+        bus.on('gl.shapept',           (m) => gl.cmdGL_SHAPEPT(m.param));
+        bus.on('gl.pathbegin',         ()  => gl.cmdGL_PATHBEGIN());
+        bus.on('gl.pathpt',            (m) => gl.cmdGL_PATHPT(m.param));
+        bus.on('gl.pathopen',          ()  => gl.cmdGL_PATHOPEN());
+        bus.on('gl.extrude',           (m) => gl.cmdGL_EXTRUDE(m.param));
+        bus.on('gl.spline',            (m) => gl.cmdGL_SPLINE(m.param));
+        bus.on('gl.track',             (m) => gl.cmdGL_TRACK(m.param));
         bus.on('gl.load',              (m) => gl.cmdGL_LOAD(m.param));
         bus.on('gl.chrome',            (m) => gl.cmdGL_CHROME(m.param));
         bus.on('gl.debug',             ()  => gl.cmdGLDEBUG());
@@ -3309,10 +3320,13 @@ class Interpreter {
     cmdGL_WIRE()               { return this.kernel.post({syscall:'gl.wire'}); }
     cmdGL_SOLID()              { return this.kernel.post({syscall:'gl.solid'}); }
     cmdGL_SOLIDWIRE()          { return this.kernel.post({syscall:'gl.solidwire'}); }
+    cmdGL_UNLIT()              { return this.kernel.post({syscall:'gl.unlit'}); }
     cmdGL_WIREALL(p)           { return this.kernel.post({syscall:'gl.wireall',param:p}); }
     cmdGL_LIGHT(p)             { return this.kernel.post({syscall:'gl.light',param:p}); }
     cmdGL_LIGHTOFF()           { return this.kernel.post({syscall:'gl.lightoff'}); }
     cmdGL_AMBIENT(p)           { return this.kernel.post({syscall:'gl.ambient',param:p}); }
+    cmdGL_PIXELRATIO(p)        { return this.kernel.post({syscall:'gl.pixelratio',param:p}); }
+    cmdGL_SMOOTH(p)            { return this.kernel.post({syscall:'gl.smooth',param:p}); }
     cmdGL_BLOOM(p)             { return this.kernel.post({syscall:'gl.bloom',param:p}); }
     cmdGL_FPS(p)               { return this.kernel.post({syscall:'gl.fps',param:p}); }
     cmdGL_RFPS(p)              { return this.kernel.post({syscall:'gl.rfps',param:p}); }
@@ -3373,6 +3387,14 @@ class Interpreter {
     cmdGL_BOX(p)               { return this.kernel.post({syscall:'gl.box',param:p}); }
     cmdGL_CYLINDER(p)          { return this.kernel.post({syscall:'gl.cylinder',param:p}); }
     cmdGL_POLYHEDRON(p)        { return this.kernel.post({syscall:'gl.polyhedron',param:p}); }
+    cmdGL_SHAPEBEGIN()         { return this.kernel.post({syscall:'gl.shapebegin'}); }
+    cmdGL_SHAPEPT(p)           { return this.kernel.post({syscall:'gl.shapept',param:p}); }
+    cmdGL_PATHBEGIN()          { return this.kernel.post({syscall:'gl.pathbegin'}); }
+    cmdGL_PATHPT(p)            { return this.kernel.post({syscall:'gl.pathpt',param:p}); }
+    cmdGL_PATHOPEN()           { return this.kernel.post({syscall:'gl.pathopen'}); }
+    cmdGL_EXTRUDE(p)           { return this.kernel.post({syscall:'gl.extrude',param:p}); }
+    cmdGL_SPLINE(p)            { return this.kernel.post({syscall:'gl.spline',param:p}); }
+    cmdGL_TRACK(p)             { return this.kernel.post({syscall:'gl.track',param:p}); }
     cmdGL_LOAD(p)              { return this.kernel.post({syscall:'gl.load',param:p}); }
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
 
@@ -4052,6 +4074,7 @@ class Interpreter {
             ['GL.INSTANCE',    0,  (p) => this.cmdGL_INSTANCE(p),      1],
             ['GL.INSTHIDE',    0,  (p) => this.cmdGL_INSTHIDE(p),      1],
             ['GL.SOLIDWIRE',   0,  ()  => this.cmdGL_SOLIDWIRE()],
+            ['GL.UNLIT',       0,  ()  => this.cmdGL_UNLIT()],
             ['GL.DRAWALL',     0,  ()  => this.cmdGL_DRAWALL()],
             ['GL.AMBIENT',     0,  (p) => this.cmdGL_AMBIENT(p),       1],
             ['GL.BLOOM',       0,  (p) => this.cmdGL_BLOOM(p),         1],
@@ -4065,6 +4088,8 @@ class Interpreter {
             ['GL.VERTEX',      0,  (p) => this.cmdGL_VERTEX(p),        1],
             ['GL.LIGHT',       0,  (p) => this.cmdGL_LIGHT(p),         1],
             ['GL.LIGHTOFF',    0,  ()  => this.cmdGL_LIGHTOFF()],
+            ['GL.PIXELRATIO',  0,  (p) => this.cmdGL_PIXELRATIO(p),    1],
+            ['GL.SMOOTH',      0,  (p) => this.cmdGL_SMOOTH(p),        1],
             ['GL.COLOR',       0,  (p) => this.cmdGL_COLOUR(p),        1],
             ['GL.ROTATE',      0,  (p) => this.cmdGL_ROTATE(p),        1],
             ['GL.SCALE',       0,  (p) => this.cmdGL_SCALE(p),         1],
@@ -4104,6 +4129,14 @@ class Interpreter {
             ['GL.BOX',         0,  (p) => this.cmdGL_BOX(p),           1],
             ['GL.CYLINDER',    0,  (p) => this.cmdGL_CYLINDER(p),      1],
             ['GL.POLYHEDRON',  0,  (p) => this.cmdGL_POLYHEDRON(p),    1],
+            ['GL.SHAPEBEGIN',  0,  ()  => this.cmdGL_SHAPEBEGIN()],
+            ['GL.SHAPEPT',     0,  (p) => this.cmdGL_SHAPEPT(p),       1],
+            ['GL.PATHBEGIN',   0,  ()  => this.cmdGL_PATHBEGIN()],
+            ['GL.PATHPT',      0,  (p) => this.cmdGL_PATHPT(p),        1],
+            ['GL.PATHOPEN',    0,  ()  => this.cmdGL_PATHOPEN()],
+            ['GL.EXTRUDE',     0,  (p) => this.cmdGL_EXTRUDE(p),       1],
+            ['GL.SPLINE',      0,  (p) => this.cmdGL_SPLINE(p),        1],
+            ['GL.TRACK',       0,  (p) => this.cmdGL_TRACK(p),         1],
             ['GL.LOAD',        0,  (p) => this.cmdGL_LOAD(p),          1],
             ['GL.CHROME',      0,  (p) => this.cmdGL_CHROME(p),        1],
             ['GL.NORMALMAP',   0,  (p) => this.cmdGL_NORMALMAP(p),     1],
