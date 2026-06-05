@@ -3165,6 +3165,8 @@ class Interpreter {
         bus.on('gl.ambient',           (m) => gl.cmdGL_AMBIENT(m.param));
         bus.on('gl.pixelratio',        (m) => gl.cmdGL_PIXELRATIO(m.param));
         bus.on('gl.smooth',            (m) => gl.cmdGL_SMOOTH(m.param));
+        bus.on('gl.profile',           ()  => gl.cmdGL_PROFILE());
+        bus.on('gl.rematerial',        (m) => gl.cmdGL_REMATERIAL(m.param));
         bus.on('gl.bloom',             (m) => gl.cmdGL_BLOOM(m.param));
         bus.on('gl.fps',               (m) => gl.cmdGL_FPS(m.param));
         bus.on('gl.rfps',              (m) => gl.cmdGL_RFPS(m.param));
@@ -3327,6 +3329,8 @@ class Interpreter {
     cmdGL_AMBIENT(p)           { return this.kernel.post({syscall:'gl.ambient',param:p}); }
     cmdGL_PIXELRATIO(p)        { return this.kernel.post({syscall:'gl.pixelratio',param:p}); }
     cmdGL_SMOOTH(p)            { return this.kernel.post({syscall:'gl.smooth',param:p}); }
+    cmdGL_PROFILE()            { return this.kernel.post({syscall:'gl.profile'}); }
+    cmdGL_REMATERIAL(p)        { return this.kernel.post({syscall:'gl.rematerial',param:p}); }
     cmdGL_BLOOM(p)             { return this.kernel.post({syscall:'gl.bloom',param:p}); }
     cmdGL_FPS(p)               { return this.kernel.post({syscall:'gl.fps',param:p}); }
     cmdGL_RFPS(p)              { return this.kernel.post({syscall:'gl.rfps',param:p}); }
@@ -4090,6 +4094,8 @@ class Interpreter {
             ['GL.LIGHTOFF',    0,  ()  => this.cmdGL_LIGHTOFF()],
             ['GL.PIXELRATIO',  0,  (p) => this.cmdGL_PIXELRATIO(p),    1],
             ['GL.SMOOTH',      0,  (p) => this.cmdGL_SMOOTH(p),        1],
+            ['GL.PROFILE',     0,  ()  => this.cmdGL_PROFILE()],
+            ['GL.REMATERIAL',  0,  (p) => this.cmdGL_REMATERIAL(p),    1],
             ['GL.COLOR',       0,  (p) => this.cmdGL_COLOUR(p),        1],
             ['GL.ROTATE',      0,  (p) => this.cmdGL_ROTATE(p),        1],
             ['GL.SCALE',       0,  (p) => this.cmdGL_SCALE(p),         1],

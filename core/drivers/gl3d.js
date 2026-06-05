@@ -684,6 +684,53 @@ class GL3DDriver {
         return CMD_OK;
     }
 
+    // GL.REMATERIAL meshid — rebuild the material on an existing mesh
+    // using the CURRENT g.mode / g.colour / g.shine / g.alpha / g.emissive
+    // settings, WITHOUT touching the geometry. Lets a program toggle view
+    // mode (solid/unlit/wire) or recolour a mesh without paying the cost
+    // of re-tessellating. For Line meshes a LineBasicMaterial is used
+    // instead of MeshLambert/MeshBasic.
+    cmdGL_REMATERIAL(param) {
+        const g = this._glState();
+        const t = g.three;
+        if (!t) return CMD_OK;
+        const p = this._glParseFloats(param, 1);
+        const id = Math.floor(p[0] || 0);
+        const m = g.meshes[id];
+        if (!m || !m._threeObjects) return CMD_OK;
+        const [r, gv, b] = g.colour;
+        const color = new THREE.Color(r/255, gv/255, b/255);
+        const opacity = g.alpha;
+        const transparent = opacity < 1.0;
+        for (const obj of m._threeObjects) {
+            if (!obj) continue;
+            // Loaded GLB pivots are Groups, not Meshes — their child
+            // meshes own internal materials we don't want to clobber.
+            if (m._isLoaded) continue;
+            if (obj.material) obj.material.dispose();
+            if (obj.isLine) {
+                obj.material = new THREE.LineBasicMaterial({ color, transparent, opacity });
+            } else if (g.mode === 'wire') {
+                obj.material = new THREE.MeshBasicMaterial({ color, wireframe: true,
+                    side: THREE.DoubleSide, transparent, opacity });
+            } else if (g.mode === 'unlit') {
+                obj.material = new THREE.MeshBasicMaterial({ color, wireframe: false,
+                    side: THREE.DoubleSide, transparent, opacity });
+            } else {
+                obj.material = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide,
+                    transparent, opacity,
+                    emissive: new THREE.Color(g.emissive[0]/255, g.emissive[1]/255, g.emissive[2]/255),
+                    depthWrite: !transparent });
+            }
+        }
+        m._builtMode = g.mode;
+        m.colour    = [r, gv, b];
+        m.shine     = g.shine;
+        m.alpha     = g.alpha;
+        m.emissive  = [...g.emissive];
+        return CMD_OK;
+    }
+
     // GL.SMOOTH [n] — toggle smooth shading for subsequent built meshes.
     // n=1 (default) → indexed geometry, vertex-normal averaging at corners
     //                  gives smooth-shaded surfaces.
@@ -1562,9 +1609,114 @@ class GL3DDriver {
             }
             if (this._gl._sky) this._gl._sky.material.uniforms.time.value = nw * 0.001;
         }
+        // ── Flight recorder ────────────────────────────────────────────
+        // Wrap the actual GPU submit in performance.now() bookends and
+        // record per-frame stats into a ring buffer (last N frames). Also
+        // accumulate per-tag time totals so we can attribute slow frames
+        // back to a specific subsystem (extrude rebuild, render pass, …).
+        // Surface via GL.PROFILE which dumps to the terminal.
+        const _perfNow = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        const _renderT0 = _perfNow;
         if (t.composer) t.composer.render();
         else t.renderer.render(t.scene, t.camera);
+        const _renderT1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        const _renderMs = _renderT1 - _renderT0;
+        this._glProfileSample(_renderMs);
         this._glJustRendered = true;
+    }
+
+    // _glProfileSample — push the latest frame's render-time into the ring
+    // buffer and bump aggregate counters. Cheap (single object write + ring
+    // index step), runs every drawn frame.
+    _glProfileSample(renderMs) {
+        const g = this._gl;
+        if (!g) return;
+        let p = g._profile;
+        if (!p) {
+            p = g._profile = {
+                ring:        new Float32Array(240),  // ~4 seconds @ 60fps
+                ringIdx:     0,
+                ringCount:   0,
+                renderMsSum: 0,
+                renderMsMax: 0,
+                frameCount:  0,
+                tags:        {},  // { tag: { count, msTotal, msMax } }
+                buildEvents: [],  // recent rebuild/extrude timings
+                start:       (typeof performance !== 'undefined') ? performance.now() : Date.now(),
+            };
+        }
+        p.ring[p.ringIdx] = renderMs;
+        p.ringIdx = (p.ringIdx + 1) % p.ring.length;
+        if (p.ringCount < p.ring.length) p.ringCount++;
+        p.renderMsSum += renderMs;
+        if (renderMs > p.renderMsMax) p.renderMsMax = renderMs;
+        p.frameCount++;
+    }
+
+    // _glProfileTag — record a one-shot timed event under a named tag.
+    // Used to instrument cmdGL_EXTRUDE, cmdGL_SPLINE, geometry builders.
+    _glProfileTag(tag, ms, extra) {
+        const g = this._gl;
+        if (!g) return;
+        if (!g._profile) this._glProfileSample(0);
+        const p = g._profile;
+        const t = p.tags[tag] || (p.tags[tag] = { count: 0, msTotal: 0, msMax: 0 });
+        t.count++;
+        t.msTotal += ms;
+        if (ms > t.msMax) t.msMax = ms;
+        if (extra) {
+            p.buildEvents.push({ tag, ms, ...extra });
+            if (p.buildEvents.length > 64) p.buildEvents.shift();
+        }
+    }
+
+    // GL.PROFILE — dump the flight recorder to the terminal. Shows
+    // overall frame stats (avg / max / last-window FPS) and a breakdown
+    // of timed rebuild events grouped by tag.
+    cmdGL_PROFILE() {
+        const g = this._glState();
+        const p = g._profile;
+        if (!p || p.frameCount === 0) {
+            this.appendLine('GL profile: no frames rendered yet', 0);
+            return CMD_OK;
+        }
+        const wallMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - p.start;
+        const avgMs  = p.renderMsSum / p.frameCount;
+        // Recent-window average from ring buffer.
+        let recentSum = 0;
+        for (let i = 0; i < p.ringCount; i++) recentSum += p.ring[i];
+        const recentAvg = (p.ringCount > 0) ? (recentSum / p.ringCount) : 0;
+        const recentFps = (recentAvg > 0) ? (1000 / recentAvg) : 0;
+        this.appendLine('=== GL flight recorder ===', 0);
+        this.appendLine('Frames: ' + p.frameCount +
+                        '   wall: ' + wallMs.toFixed(0) + ' ms', 0);
+        this.appendLine('Render ms  avg: ' + avgMs.toFixed(2) +
+                        '   max: ' + p.renderMsMax.toFixed(2) +
+                        '   recent: ' + recentAvg.toFixed(2) +
+                        '   (~' + recentFps.toFixed(1) + ' fps)', 0);
+        const tagNames = Object.keys(p.tags);
+        if (tagNames.length) {
+            this.appendLine('--- Tagged build events ---', 0);
+            for (const tag of tagNames) {
+                const t = p.tags[tag];
+                this.appendLine('  ' + tag.padEnd(18) +
+                    ' x' + String(t.count).padEnd(4) +
+                    ' total ' + t.msTotal.toFixed(2) + ' ms' +
+                    '  max ' + t.msMax.toFixed(2) + ' ms', 0);
+            }
+        }
+        if (p.buildEvents.length) {
+            this.appendLine('--- Recent events ---', 0);
+            for (const ev of p.buildEvents.slice(-10)) {
+                let line = '  ' + ev.tag + ': ' + ev.ms.toFixed(2) + ' ms';
+                for (const k in ev) {
+                    if (k === 'tag' || k === 'ms') continue;
+                    line += '   ' + k + '=' + ev[k];
+                }
+                this.appendLine(line, 0);
+            }
+        }
+        return CMD_OK;
     }
 
     // Ensure an EffectComposer (RenderPass only) exists on `t`. Once active, frames render through
@@ -3196,6 +3348,7 @@ void main() {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
         if (!t) return CMD_OK;
+        const _t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
         const shapePts = g._shapePoints || [];
         const pathPts  = g._pathPoints  || [];
         if (shapePts.length < 3) {
@@ -3259,13 +3412,26 @@ void main() {
         // keeps working: for closed paths in the XZ plane the Frenet binormal
         // points -Y on a CW traversal and +Y on a CCW traversal. We pick the
         // sign once per call from the path's signed XZ area.
+        //
+        // Self-crossing paths (figure-8 / lemniscate) trade winding direction
+        // between their two loops, so the signed area cancels near zero and
+        // its sign becomes noise — every regeneration flipped the cross-
+        // section upside down at random. When the signed area is small
+        // relative to the total absolute area we treat it as ambiguous and
+        // fall back to dir = -1 (the convention used by MADMAX shapes:
+        // negative shape.x = walls go up).
         let signedArea = 0;
+        let absArea = 0;
         for (let i = 0; i < N; i++) {
             const p1 = pathSamples[i];
             const p2 = pathSamples[(i + 1) % N];
-            signedArea += p1.x * p2.z - p2.x * p1.z;
+            const term = p1.x * p2.z - p2.x * p1.z;
+            signedArea += term;
+            absArea    += Math.abs(term);
         }
-        const dir = (signedArea > 0) ? -1 : 1;
+        const dir = (absArea > 0 && Math.abs(signedArea) > 0.05 * absArea)
+            ? ((signedArea > 0) ? -1 : 1)
+            : -1;
 
         const positions = new Float32Array(N * M * 3);
         const tangent = new THREE.Vector3();
@@ -3353,6 +3519,13 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
+        const _t1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        this._glProfileTag('extrude', _t1 - _t0, {
+            shape: (shapeStyle === 1) ? 'spline' : 'polygon',
+            smooth: (g.smooth === false) ? 0 : 1,
+            M, N,
+            tris: (geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3) | 0,
+        });
         return CMD_OK;
     }
 
