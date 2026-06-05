@@ -2291,17 +2291,15 @@ class GL3DDriver {
         return CMD_OK;
     }
 
-// GL.HIDE id — remove mesh from scene entirely
+// GL.HIDE id — make a mesh invisible. Leaves it in the scene graph and on
+// the GPU; pair with GL.SHOW to bring it back. Use GL.DISPOSE if you want
+// to actually free the geometry/material and reclaim the id.
     cmdGL_HIDE(param) {
         const g = this._glState();
-        const t = g.three;
         const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
         const m = g.meshes[id];
         if (m && m._threeObjects) {
-            for (const o of m._threeObjects) {
-                o.visible = false;
-                if (t && t.scene) t.scene.remove(o);
-            }
+            for (const o of m._threeObjects) o.visible = false;
         }
         return CMD_OK;
     }
@@ -2363,9 +2361,18 @@ class GL3DDriver {
 // GL.SHOW id — make a previously hidden mesh visible again
     cmdGL_SHOW(param) {
         const g = this._glState();
+        const t = g.three;
         const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
         const m = g.meshes[id];
-        if (m && m._threeObjects) { for (const o of m._threeObjects) o.visible = true; }
+        if (m && m._threeObjects) {
+            for (const o of m._threeObjects) {
+                o.visible = true;
+                // Defensive: if an older GL.HIDE (or external code) detached
+                // this object from the scene, parent will be null and just
+                // flipping visible won't re-render it. Re-attach.
+                if (t && t.scene && !o.parent) t.scene.add(o);
+            }
+        }
         return CMD_OK;
     }
 
@@ -3429,7 +3436,7 @@ void main() {
             signedArea += term;
             absArea    += Math.abs(term);
         }
-        const dir = (absArea > 0 && Math.abs(signedArea) > 0.05 * absArea)
+        const dir = (absArea > 0 && Math.abs(signedArea) > 0.30 * absArea)
             ? ((signedArea > 0) ? -1 : 1)
             : -1;
 
@@ -3539,6 +3546,11 @@ void main() {
         for (const id in g.meshes) {
             const m = g.meshes[id];
             if (!m || !m._threeObjects) continue;
+            // Skip "helper / marker" meshes — lines (0 tris anyway), sphere
+            // & box primitives (typically waypoint markers like MADMAX's
+            // path-control cubes), particle systems. We want the count to
+            // reflect the main rendered geometry, not the gizmos.
+            if (m._isLine || m._isSphere || m._isParticles) continue;
             for (const obj of m._threeObjects) {
                 if (!obj || obj.visible === false) continue;
                 if (obj.isLine || obj.isPoints) continue;
@@ -3557,6 +3569,7 @@ void main() {
         for (const id in g.meshes) {
             const m = g.meshes[id];
             if (!m || !m._threeObjects) continue;
+            if (m._isLine || m._isSphere || m._isParticles) continue;
             for (const obj of m._threeObjects) {
                 if (!obj || obj.visible === false) continue;
                 const geo = obj.geometry;
