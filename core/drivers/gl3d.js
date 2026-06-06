@@ -1066,6 +1066,8 @@ class GL3DDriver {
     _buildFireVertexShader(flavor) {
         if (flavor === 'warm') {
             return [
+                '#include <common>',
+                '#include <logdepthbuf_pars_vertex>',
                 'uniform float time;',
                 'uniform float lifetime;',
                 'uniform float trailMul;',
@@ -1095,6 +1097,7 @@ class GL3DDriver {
                 '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * ease, position.z * spreadMul);',
                 '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
                 '    gl_Position = projectionMatrix * mv;',
+                '    #include <logdepthbuf_vertex>',
                 '    // Yomotsu opacity envelope: quick rise (min*4), slow decay (1-phase).',
                 '    vOpacity = min(influence * 4.0, 1.0) * (1.0 - phase);',
                 '    // Perspective-correct: pointSize is WORLD UNITS (yomotsu material.size).',
@@ -1104,6 +1107,8 @@ class GL3DDriver {
         }
         // tinted path
         return [
+            '#include <common>',
+            '#include <logdepthbuf_pars_vertex>',
             'uniform float time;',
             'uniform float lifetime;',
             'uniform float trailMul;',
@@ -1126,6 +1131,7 @@ class GL3DDriver {
             '    vec3 pos = vec3(position.x * spreadMul, position.y * trailMul * intensity * phase, position.z * spreadMul);',
             '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
             '    gl_Position = projectionMatrix * mv;',
+            '    #include <logdepthbuf_vertex>',
             '    float shrink = pow(max(0.0, 1.0 - phase), sizeFalloff);',
             '    // Hard-clamp gl_PointSize at 64 so behaviour is consistent across',
             '    // GPUs. Different drivers clamp internally at 64/256/1024 — without',
@@ -1150,6 +1156,8 @@ class GL3DDriver {
             // the vOpacity envelope from the vertex shader. Additive blending
             // means many overlapping particles stack into a bright fire core.
             return [
+                '#include <common>',
+                '#include <logdepthbuf_pars_fragment>',
                 'uniform vec3 colorYoung;',
                 'uniform vec3 colorOld;',
                 'uniform float opacity;',
@@ -1171,12 +1179,15 @@ class GL3DDriver {
                 '    // the per-particle flame shapes show through.',
                 '    vec3 color = texel * colorYoung * vOpacity * opacity * intensity;',
                 '    gl_FragColor = vec4(color, 1.0);',
+                '    #include <logdepthbuf_fragment>',
                 '}'
             ].join('\n');
         }
         // Tinted path: radial gradient (no texture). Used by plasma/sparks
         // and any caller that wants full colour control without a flame shape.
         return [
+            '#include <common>',
+            '#include <logdepthbuf_pars_fragment>',
             'uniform vec3 colorYoung;',
             'uniform vec3 colorOld;',
             'uniform float opacity;',
@@ -1193,6 +1204,7 @@ class GL3DDriver {
             '    float lifeAlpha = 1.0 - vLife;',
             '    float alpha = falloff * lifeAlpha * opacity * intensity;',
             '    gl_FragColor = vec4(color, alpha);',
+            '    #include <logdepthbuf_fragment>',
             '}'
         ].join('\n');
     }
@@ -1267,6 +1279,8 @@ class GL3DDriver {
         const mat = new THREE.ShaderMaterial({
             uniforms,
             vertexShader: [
+                '#include <common>',
+                '#include <logdepthbuf_pars_vertex>',
                 'uniform float time;',
                 'uniform float lifetime;',
                 'uniform float trailMul;',
@@ -1295,12 +1309,15 @@ class GL3DDriver {
                 '    );',
                 '    vec4 mv = modelViewMatrix * vec4(pos, 1.0);',
                 '    gl_Position = projectionMatrix * mv;',
+                '    #include <logdepthbuf_vertex>',
                 '    // Cloud puffs GROW over life (opposite of fire shrink).',
                 '    float growth = mix(0.4, 2.4, phase);',
                 '    gl_PointSize = pointSize * growth * (300.0 / max(-mv.z, 1.0));',
                 '}'
             ].join('\n'),
             fragmentShader: [
+                '#include <common>',
+                '#include <logdepthbuf_pars_fragment>',
                 'uniform vec3 colorYoung;',
                 'uniform vec3 colorOld;',
                 'uniform float opacity;',
@@ -1319,6 +1336,7 @@ class GL3DDriver {
                 '    float lifeMask = sin(vLife * 3.14159);',
                 '    float alpha = falloff * lifeMask * opacity * intensity;',
                 '    gl_FragColor = vec4(color, alpha);',
+                '    #include <logdepthbuf_fragment>',
                 '}'
             ].join('\n'),
             blending: THREE.NormalBlending,
@@ -2469,16 +2487,21 @@ class GL3DDriver {
 
     _cloudVertSrc() {
         return `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 varying vec3 vWorld;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
+  #include <logdepthbuf_vertex>
 }`;
     }
 
     _cloudFragSrc() {
         return `
+#include <common>
+#include <logdepthbuf_pars_fragment>
 varying vec3 vWorld;
 uniform float uTime;
 uniform float uCoverage;
@@ -2564,6 +2587,7 @@ void main() {
   float alpha = 1.0 - trans;
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(col, alpha);
+  #include <logdepthbuf_fragment>
 }`;
     }
 
@@ -2713,7 +2737,7 @@ void main() {
                 uHigh: { value: new THREE.Color(0.28, 0.55, 0.92) },
                 uWire: { value: new THREE.Color(0.35, 0.62, 1.0) },
                 uMaxH: { value: Math.max(1, height) },
-                uGrid:    { value: mode },
+                uGrid: { value: mode },
                 uFog:     { value: fogColor },
                 uFogNear: { value: fg ? fg.near : 300 },
                 uFogFar:  { value: fg ? fg.far  : 1600 },
@@ -2745,6 +2769,8 @@ void main() {
 
     _terrainVertSrc() {
         return `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 attribute vec3 center;
 varying vec3 vCenter;
 varying vec3 vWorldPos;
@@ -2758,11 +2784,14 @@ void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vDist = -mv.z;
   gl_Position = projectionMatrix * mv;
+  #include <logdepthbuf_vertex>
 }`;
     }
 
     _terrainFragSrc() {
         return `
+#include <common>
+#include <logdepthbuf_pars_fragment>
 varying vec3 vCenter;
 varying vec3 vWorldPos;
 varying float vH;
@@ -2778,8 +2807,6 @@ uniform float uGrid;
 uniform vec3 uLightDir;
 uniform float uAmbient;
 float edgeFactor() {
-  // Clamp the derivative to a minimum so distant lines stay a stable thickness
-  // instead of going noisy/shimmery as the screen-space derivative collapses.
   vec3 d = max(fwidth(vCenter), vec3(0.002));
   vec3 a3 = smoothstep(vec3(0.0), d * 1.5, vCenter);
   return min(min(a3.x, a3.y), a3.z);
@@ -2787,20 +2814,108 @@ float edgeFactor() {
 void main() {
   float h = clamp(vH / uMaxH, 0.0, 1.0);
   vec3 base = mix(uLow, uHigh, h);
-  // flat per-fragment normal from world-position derivatives (no normal attribute needed)
   vec3 n = normalize(cross(dFdy(vWorldPos), dFdx(vWorldPos)));
   float diff = max(dot(n, normalize(uLightDir)), 0.0);
   float amb = min(uAmbient * 2.0, 1.0);
   float lit = amb + (1.0 - amb) * diff;
-  base = base * lit;
+  vec3 col = base * lit;
+  // Wireframe overlay (only when uGrid > 0): paint the wire color over the
+  // shaded surface near triangle edges. The surface itself stays opaque so
+  // depth occlusion is correct in both modes — hills hide the track that
+  // sits behind them. Fade lines out with distance to avoid shimmer.
   float e = edgeFactor();
-  // Fade the grid lines out with distance so far-away triangles don't shimmer.
   float gridFade = 1.0 - smoothstep(400.0, 1100.0, vDist);
-  float effGrid = uGrid * gridFade;
-  vec3 col = mix(base, mix(uWire, base, e), effGrid);
+  float wireAmt = uGrid * (1.0 - e) * gridFade;
+  col = mix(col, uWire, wireAmt);
   col = mix(col, uFog, smoothstep(uFogNear, uFogFar, vDist));
   gl_FragColor = vec4(col, 1.0);
+  #include <logdepthbuf_fragment>
 }`;
+    }
+
+// GL.TERRAIN_CARVE lineMeshId, halfWidth, yOffset [, falloff]
+// — flatten the GL.TERRAIN surface along the xz footprint of a GL.SPLINE
+// (or any line mesh whose geometry holds the sampled curve points). Each
+// terrain vertex within `halfWidth` of the spline gets its Y clamped down
+// to (nearest_sample_world_y + yOffset). `falloff` (default 0) adds a
+// smoothstep blend ring outside halfWidth that eases the carve back up to
+// the original noise — set it to the same magnitude as halfWidth for a
+// soft cradle around the track. Only LOWERS terrain; never raises it.
+//   - lineMeshId : id of the spline mesh (GL.SPLINE result)
+//   - halfWidth  : full-carve radius in world units
+//   - yOffset    : added to each spline sample's world Y to get carve floor
+//                  (negative = carve below the spline; typical use:
+//                   -(track wall height + a few units of clearance))
+//   - falloff    : optional smooth-blend ring outside halfWidth
+//
+// Implementation notes:
+//   - GL.PROBE / _terrainH still consult the procedural noise function, so
+//     ship collision is NOT carve-aware. Cosmetic only for now.
+//   - O(N*M) where N = terrain verts, M = spline samples. A typical 240-seg
+//     terrain + 24-pt path at samplesPer=24 runs in <100ms on a modern CPU.
+    cmdGL_TERRAIN_CARVE(param) {
+        const g = this._glState();
+        if (!g._terrain || !g._terrain.geometry) return CMD_OK;
+        const p = this._glParseFloats(param, 4);
+        const lineId    = Math.round(p[0]);
+        const halfWidth = Math.max(0, p[1] || 0);
+        const yOffset   = (p[2] !== undefined) ? p[2] : 0;
+        const falloff   = Math.max(0, p[3] || 0);
+        if (halfWidth <= 0) return CMD_OK;
+        const lineMesh = g.meshes[lineId];
+        if (!lineMesh || !lineMesh._threeObjects || !lineMesh._threeObjects[0]) return CMD_OK;
+        const lineObj  = lineMesh._threeObjects[0];
+        const lineGeom = lineObj.geometry;
+        if (!lineGeom || !lineGeom.attributes || !lineGeom.attributes.position) return CMD_OK;
+        // Cache spline samples in world space (the line mesh may have been
+        // GL.TRANSLATEd — its position offset must be added to each sample).
+        const linePos = lineGeom.attributes.position;
+        const lineCount = linePos.count;
+        if (lineCount < 2) return CMD_OK;
+        const sx = lineObj.position.x, sy = lineObj.position.y, sz = lineObj.position.z;
+        const sampleX = new Float32Array(lineCount);
+        const sampleY = new Float32Array(lineCount);
+        const sampleZ = new Float32Array(lineCount);
+        for (let i = 0; i < lineCount; i++) {
+            sampleX[i] = linePos.getX(i) + sx;
+            sampleY[i] = linePos.getY(i) + sy;
+            sampleZ[i] = linePos.getZ(i) + sz;
+        }
+        // Terrain vertex positions are local to the terrain mesh; world xz =
+        // local xz + terrain.position.xz. terrain.position.y is 0 so vy IS world Y.
+        const tPos  = g._terrain.geometry.attributes.position;
+        const tArr  = tPos.array;
+        const tCount = tPos.count;
+        const tcx = g._terrain.position.x, tcz = g._terrain.position.z;
+        const hwSq    = halfWidth * halfWidth;
+        const outerR  = halfWidth + falloff;
+        const outerSq = outerR * outerR;
+        for (let i = 0; i < tCount; i++) {
+            const vx = tArr[3*i]     + tcx;
+            const vy = tArr[3*i + 1];
+            const vz = tArr[3*i + 2] + tcz;
+            // nearest-sample search in xz
+            let bestSq = Infinity, bestJ = 0;
+            for (let j = 0; j < lineCount; j++) {
+                const dx = vx - sampleX[j];
+                const dz = vz - sampleZ[j];
+                const dSq = dx*dx + dz*dz;
+                if (dSq < bestSq) { bestSq = dSq; bestJ = j; if (dSq < hwSq) break; }
+            }
+            if (bestSq >= outerSq) continue;
+            const carveFloor = sampleY[bestJ] + yOffset;
+            if (bestSq <= hwSq) {
+                if (vy > carveFloor) tArr[3*i + 1] = carveFloor;
+            } else if (falloff > 0) {
+                const t = (Math.sqrt(bestSq) - halfWidth) / falloff;
+                const sm = t * t * (3 - 2 * t);    // smoothstep
+                const blendY = carveFloor + (vy - carveFloor) * sm;
+                if (vy > blendY) tArr[3*i + 1] = blendY;
+            }
+        }
+        tPos.needsUpdate = true;
+        g._terrain.geometry.computeBoundingSphere();
+        return CMD_OK;
     }
 
 // GL.PROBE x, z — sample the GL.TERRAIN surface height at world (x,z).

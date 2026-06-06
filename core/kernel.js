@@ -3210,6 +3210,7 @@ class Interpreter {
         bus.on('gl.clouds',            (m) => gl.cmdGL_CLOUDS(m.param));
         bus.on('gl.sky',               (m) => gl.cmdGL_SKY(m.param));
         bus.on('gl.terrain',           (m) => gl.cmdGL_TERRAIN(m.param));
+        bus.on('gl.terrain_carve',     (m) => gl.cmdGL_TERRAIN_CARVE(m.param));
         bus.on('gl.probe',             (m) => gl.cmdGL_PROBE(m.param));
         bus.on('gl.scanfwd',           (m) => gl.cmdGL_SCANFWD(m.param));
         bus.on('gl.obstacle',          (m) => gl.cmdGL_OBSTACLE(m.param));
@@ -3376,6 +3377,7 @@ class Interpreter {
     cmdGL_CLOUDS(p)            { return this.kernel.post({syscall:'gl.clouds',param:p}); }
     cmdGL_SKY(p)               { return this.kernel.post({syscall:'gl.sky',param:p}); }
     cmdGL_TERRAIN(p)           { return this.kernel.post({syscall:'gl.terrain',param:p}); }
+    cmdGL_TERRAIN_CARVE(p)     { return this.kernel.post({syscall:'gl.terrain_carve',param:p}); }
     cmdGL_PROBE(p)             { return this.kernel.post({syscall:'gl.probe',param:p}); }
     cmdGL_SCANFWD(p)           { return this.kernel.post({syscall:'gl.scanfwd',param:p}); }
     cmdGL_OBSTACLE(p)          { return this.kernel.post({syscall:'gl.obstacle',param:p}); }
@@ -4122,6 +4124,7 @@ class Interpreter {
             ['GL.CLOUDS',      0,  (p) => this.cmdGL_CLOUDS(p),        1],
             ['GL.SKY',         0,  (p) => this.cmdGL_SKY(p),           1],
             ['GL.TERRAIN',     0,  (p) => this.cmdGL_TERRAIN(p),       1],
+            ['GL.TERRAIN_CARVE', 0,(p) => this.cmdGL_TERRAIN_CARVE(p), 1],
             ['GL.PROBE',       0,  (p) => this.cmdGL_PROBE(p),         1],
             ['GL.SCANFWD',     0,  (p) => this.cmdGL_SCANFWD(p),       1],
             ['GL.OBSTACLE',    0,  (p) => this.cmdGL_OBSTACLE(p),      1],
