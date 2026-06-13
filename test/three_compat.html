@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OSaware — three.js compat suite</title>
+  <style>
+    html, body { margin:0; padding:0; background:#0c0c12; color:#dde; font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; font-size: 13px; line-height: 1.45; }
+    header { padding: 12px 16px; background:#15151c; border-bottom:1px solid #2a2a36; position: sticky; top:0; z-index: 5; }
+    h1 { margin:0 0 4px 0; font-size: 15px; font-weight: 600; color:#eef; }
+    .meta { color:#88a; font-size:11px; }
+    .summary { margin-top:6px; padding:6px 10px; background:#1a1a24; border:1px solid #333; border-radius:4px; display:inline-block; }
+    .summary.pass { border-color:#3a3; color:#9f9; }
+    .summary.fail { border-color:#a33; color:#f99; }
+    .summary.running { border-color:#aa3; color:#ff9; }
+    main { padding: 0 16px 80px 16px; }
+    .group { margin-top: 16px; }
+    .group-h { font-size: 12px; color:#aaa; padding: 4px 0; border-bottom: 1px solid #2a2a36; letter-spacing: 0.08em; text-transform: uppercase; }
+    .row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px dashed #1f1f28; }
+    .mark { width: 20px; text-align: center; flex-shrink: 0; }
+    .mark.pass { color:#5d5; }
+    .mark.fail { color:#f55; }
+    .mark.skip { color:#aa6; }
+    .name { width: 360px; flex-shrink: 0; }
+    .details { color:#88a; flex-grow:1; word-break: break-word; }
+    .details.fail { color:#fa8; }
+    canvas#test-canvas { display:block; margin: 16px 0; border: 1px solid #2a2a36; background:#000; }
+    button { background:#22243a; color:#dde; border:1px solid #444; border-radius:4px; padding: 6px 14px; cursor: pointer; font-family: inherit; font-size: 12px; margin-left: 8px; }
+    button:hover { background:#2d2f4a; }
+    .nb { color:#fc6; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OSaware — three.js compat suite</h1>
+    <div class="meta">
+      Engine target: <span id="meta-rev">…</span> · Loaded from <span id="meta-src">core/</span>
+      <button onclick="runAll()">Run all</button>
+    </div>
+    <div id="summary" class="summary running">running…</div>
+  </header>
+  <canvas id="test-canvas" width="320" height="180"></canvas>
+  <main id="results"></main>
+
+  <!-- Same script load order as index.html -->
+  <script src="../core/three.min.js"></script>
+  <script src="../core/loaders/GLTFLoader.js"></script>
+  <script src="../core/loaders/RectAreaLightUniformsLib.js"></script>
+  <script src="../core/loaders/Sky.js"></script>
+  <script src="../core/loaders/CopyShader.js"></script>
+  <script src="../core/loaders/LuminosityHighPassShader.js"></script>
+  <script src="../core/loaders/EffectComposer.js"></script>
+  <script src="../core/loaders/RenderPass.js"></script>
+  <script src="../core/loaders/ShaderPass.js"></script>
+  <script src="../core/loaders/UnrealBloomPass.js"></script>
+  <script src="../core/loaders/FXAAShader.js"></script>
+
+  <script>
+  // ────────────────────────────────────────────────────────────────
+  //  Test harness — exercises every THREE.* symbol + addon used by
+  //  core/drivers/gl3d.js and core/drivers/gfx.js. Run against r128
+  //  to lock baseline; then re-run after each three.js upgrade.
+  // ────────────────────────────────────────────────────────────────
+
+  const TESTS = [];
+  function t(group, name, fn) { TESTS.push({ group, name, fn }); }
+
+  const results = document.getElementById('results');
+  const summary = document.getElementById('summary');
+  document.getElementById('meta-rev').textContent = (typeof THREE !== 'undefined' && THREE.REVISION) ? `r${THREE.REVISION}` : 'THREE undefined';
+
+  // Shared scratch state. WebGL renderer is real (we render a frame at the end).
+  const canvas = document.getElementById('test-canvas');
+  let renderer = null, scene = null, camera = null;
+
+  // ─── A. Renderer + GL context ────────────────────────────────
+  t('A · Renderer', 'THREE global exists with REVISION', () => {
+    if (typeof THREE !== 'object') throw new Error('THREE not loaded');
+    if (!THREE.REVISION) throw new Error('THREE.REVISION missing');
+    return `revision ${THREE.REVISION}`;
+  });
+  t('A · Renderer', 'WebGLRenderer constructs (logarithmicDepthBuffer)', () => {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
+    renderer.setSize(canvas.width, canvas.height, false);
+    return `gl: ${renderer.getContext().constructor.name}`;
+  });
+  t('A · Renderer', 'Renderer capabilities reachable', () => {
+    const c = renderer.capabilities;
+    if (!c) throw new Error('renderer.capabilities undefined');
+    return `maxTextures=${c.maxTextures} isWebGL2=${c.isWebGL2}`;
+  });
+
+  // ─── B. Cameras ─────────────────────────────────────────────
+  t('B · Cameras', 'PerspectiveCamera constructs', () => {
+    camera = new THREE.PerspectiveCamera(70, canvas.width / canvas.height, 0.1, 15000);
+    camera.position.set(0, 5, 10);
+    camera.lookAt(0, 0, 0);
+    return `fov=${camera.fov} near=${camera.near} far=${camera.far}`;
+  });
+  t('B · Cameras', 'OrthographicCamera constructs', () => {
+    const o = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    return `left=${o.left} right=${o.right}`;
+  });
+
+  // ─── C. Geometry ────────────────────────────────────────────
+  t('C · Geometry', 'BoxGeometry', () => {
+    const g = new THREE.BoxGeometry(1, 2, 3);
+    return `vertices=${g.attributes.position.count}`;
+  });
+  t('C · Geometry', 'SphereGeometry', () => {
+    const g = new THREE.SphereGeometry(1, 16, 12);
+    return `vertices=${g.attributes.position.count}`;
+  });
+  t('C · Geometry', 'PlaneGeometry', () => {
+    const g = new THREE.PlaneGeometry(10, 10);
+    return `vertices=${g.attributes.position.count}`;
+  });
+  t('C · Geometry', 'CylinderGeometry', () => {
+    const g = new THREE.CylinderGeometry(1, 1, 2, 8);
+    return `vertices=${g.attributes.position.count}`;
+  });
+  t('C · Geometry', 'BufferGeometry + Float32BufferAttribute', () => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, 1,0,0, 0,1,0], 3));
+    if (g.attributes.position.count !== 3) throw new Error(`expected 3 verts, got ${g.attributes.position.count}`);
+    return 'ok';
+  });
+  t('C · Geometry', 'BufferAttribute (raw Float32Array)', () => {
+    const arr = new Float32Array([0,0,0, 1,0,0, 0,1,0]);
+    const a = new THREE.BufferAttribute(arr, 3);
+    if (a.itemSize !== 3 || a.count !== 3) throw new Error('shape mismatch');
+    return 'ok';
+  });
+  t('C · Geometry', 'ExtrudeGeometry (Shape + path)', () => {
+    const shape = new THREE.Shape();
+    shape.moveTo(-1, -1); shape.lineTo(1, -1); shape.lineTo(1, 1); shape.lineTo(-1, 1); shape.closePath();
+    const path = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,10), new THREE.Vector3(0,0,20)
+    ]);
+    const g = new THREE.ExtrudeGeometry(shape, { steps: 4, extrudePath: path });
+    return `vertices=${g.attributes.position.count}`;
+  });
+  t('C · Geometry', 'EdgesGeometry', () => {
+    const box = new THREE.BoxGeometry(1,1,1);
+    const e = new THREE.EdgesGeometry(box);
+    return `vertices=${e.attributes.position.count}`;
+  });
+  t('C · Geometry', 'Shape', () => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0,0); shape.lineTo(1,0); shape.lineTo(0,1); shape.closePath();
+    return 'ok';
+  });
+
+  // ─── D. Curves ──────────────────────────────────────────────
+  t('D · Curves', 'CatmullRomCurve3 uniform', () => {
+    const c = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0,0,0), new THREE.Vector3(1,1,0),
+      new THREE.Vector3(2,0,0), new THREE.Vector3(3,-1,0)
+    ], false, 'catmullrom');
+    const p = c.getPoint(0.5);
+    return `getPoint(0.5) = (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`;
+  });
+  t('D · Curves', 'CatmullRomCurve3 centripetal', () => {
+    const c = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0,0,0), new THREE.Vector3(1,1,0),
+      new THREE.Vector3(2,0,0), new THREE.Vector3(3,-1,0)
+    ], false, 'centripetal');
+    const pts = c.getPoints(8);
+    return `getPoints(8) returned ${pts.length}`;
+  });
+  t('D · Curves', 'CubicBezierCurve3', () => {
+    const c = new THREE.CubicBezierCurve3(
+      new THREE.Vector3(0,0,0), new THREE.Vector3(1,1,0),
+      new THREE.Vector3(2,1,0), new THREE.Vector3(3,0,0)
+    );
+    const p = c.getPoint(0.5);
+    return `getPoint(0.5) = (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`;
+  });
+  t('D · Curves', 'LineCurve3', () => {
+    const c = new THREE.LineCurve3(new THREE.Vector3(0,0,0), new THREE.Vector3(1,2,3));
+    const p = c.getPoint(0.5);
+    return `mid = (${p.x}, ${p.y}, ${p.z})`;
+  });
+  t('D · Curves', 'CurvePath + add', () => {
+    const cp = new THREE.CurvePath();
+    cp.add(new THREE.LineCurve3(new THREE.Vector3(0,0,0), new THREE.Vector3(1,0,0)));
+    cp.add(new THREE.LineCurve3(new THREE.Vector3(1,0,0), new THREE.Vector3(1,1,0)));
+    return `curves=${cp.curves.length} len=${cp.getLength().toFixed(2)}`;
+  });
+  t('D · Curves', 'SplineCurve (2D)', () => {
+    const c = new THREE.SplineCurve([new THREE.Vector2(0,0), new THREE.Vector2(1,1), new THREE.Vector2(2,0)]);
+    const p = c.getPoint(0.5);
+    return `getPoint(0.5) = (${p.x.toFixed(2)}, ${p.y.toFixed(2)})`;
+  });
+
+  // ─── E. Materials ───────────────────────────────────────────
+  t('E · Materials', 'MeshBasicMaterial', () => new THREE.MeshBasicMaterial({ color: 0xff8800 }) && 'ok');
+  t('E · Materials', 'MeshLambertMaterial', () => new THREE.MeshLambertMaterial({ color: 0xff8800 }) && 'ok');
+  t('E · Materials', 'MeshPhongMaterial', () => new THREE.MeshPhongMaterial({ color: 0xff8800, shininess: 30, emissive: 0x111111 }) && 'ok');
+  t('E · Materials', 'MeshStandardMaterial', () => new THREE.MeshStandardMaterial({ color: 0xff8800, metalness: 0.3, roughness: 0.5 }) && 'ok');
+  t('E · Materials', 'LineBasicMaterial', () => new THREE.LineBasicMaterial({ color: 0x00ff00 }) && 'ok');
+  t('E · Materials', 'ShaderMaterial (trivial)', () => {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(1, 0, 0) } },
+      vertexShader: 'void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader: 'uniform vec3 uColor; void main(){gl_FragColor=vec4(uColor,1.0);}'
+    });
+    return `transparent=${m.transparent}`;
+  });
+
+  // ─── F. ShaderChunk presence (depends on log-depth integration) ──
+  ['common', 'logdepthbuf_pars_vertex', 'logdepthbuf_vertex', 'logdepthbuf_pars_fragment', 'logdepthbuf_fragment'].forEach(name => {
+    t('F · ShaderChunks', `ShaderChunk["${name}"]`, () => {
+      const s = THREE.ShaderChunk[name];
+      if (typeof s !== 'string' || s.length === 0) throw new Error(`missing or empty (typeof=${typeof s})`);
+      return `${s.length} chars`;
+    });
+  });
+  t('F · ShaderChunks', 'Compile terrain-style ShaderMaterial with log-depth', () => {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0.5, 0.5, 0.5) } },
+      vertexShader: `
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mv;
+          #include <logdepthbuf_vertex>
+        }`,
+      fragmentShader: `
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        uniform vec3 uColor;
+        void main() {
+          gl_FragColor = vec4(uColor, 1.0);
+          #include <logdepthbuf_fragment>
+        }`,
+      side: THREE.DoubleSide
+    });
+    // Force shader compile by adding mesh to scene + rendering
+    const tmpScene = new THREE.Scene();
+    const tmpMesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), m);
+    tmpScene.add(tmpMesh);
+    const tmpCam = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    tmpCam.position.set(0, 0, 5);
+    renderer.render(tmpScene, tmpCam);
+    const gl = renderer.getContext();
+    const err = gl.getError();
+    if (err !== gl.NO_ERROR) throw new Error(`gl.getError = ${err}`);
+    return `compile + render OK (${m.uuid.slice(0,8)})`;
+  });
+
+  // ─── G. Math + utilities ────────────────────────────────────
+  t('G · Math', 'Color', () => {
+    const c = new THREE.Color(1, 0.5, 0.25);
+    return `r=${c.r} g=${c.g} b=${c.b}`;
+  });
+  t('G · Math', 'Vector2', () => new THREE.Vector2(3, 4).length() === 5 ? 'len=5' : (() => { throw new Error('Vector2 length wrong'); })());
+  t('G · Math', 'Vector3', () => new THREE.Vector3(1, 2, 2).length() === 3 ? 'len=3' : (() => { throw new Error('Vector3 length wrong'); })());
+  t('G · Math', 'Euler', () => new THREE.Euler(0.1, 0.2, 0.3, 'XYZ') && 'ok');
+  t('G · Math', 'Matrix4', () => {
+    const m = new THREE.Matrix4();
+    m.identity();
+    const e = m.elements;
+    if (e[0] !== 1 || e[5] !== 1 || e[10] !== 1 || e[15] !== 1) throw new Error('identity wrong');
+    return 'identity ok';
+  });
+  t('G · Math', 'Box3 + setFromObject', () => {
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 6), new THREE.MeshBasicMaterial());
+    cube.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(cube);
+    const size = new THREE.Vector3(); b.getSize(size);
+    return `size = (${size.x}, ${size.y}, ${size.z})`;
+  });
+
+  // ─── H. Scene graph ─────────────────────────────────────────
+  t('H · Scene', 'Scene + add + Mesh', () => {
+    scene = new THREE.Scene();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshPhongMaterial({ color: 0x88ccff }));
+    scene.add(m);
+    return `children=${scene.children.length}`;
+  });
+  t('H · Scene', 'Group + add', () => {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial()));
+    return `group children=${g.children.length}`;
+  });
+  t('H · Scene', 'Points', () => {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, 1,1,1], 3));
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: 'void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);gl_PointSize=4.0;}',
+      fragmentShader: 'void main(){gl_FragColor=vec4(1.0);}'
+    });
+    const p = new THREE.Points(geom, mat);
+    return `type=${p.type}`;
+  });
+  t('H · Scene', 'Line + LineSegments', () => {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, 1,1,1], 3));
+    const line = new THREE.Line(geom, new THREE.LineBasicMaterial());
+    const seg  = new THREE.LineSegments(geom, new THREE.LineBasicMaterial());
+    return `line=${line.type} seg=${seg.type}`;
+  });
+  t('H · Scene', 'InstancedMesh + setMatrixAt', () => {
+    const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial(), 4);
+    const m = new THREE.Matrix4();
+    m.setPosition(5, 0, 0);
+    im.setMatrixAt(0, m);
+    return `count=${im.count}`;
+  });
+  t('H · Scene', 'Fog', () => {
+    const f = new THREE.Fog(0x223344, 100, 1000);
+    return `near=${f.near} far=${f.far}`;
+  });
+
+  // ─── I. Lights ──────────────────────────────────────────────
+  t('I · Lights', 'AmbientLight', () => new THREE.AmbientLight(0xffffff, 0.5) && 'ok');
+  t('I · Lights', 'DirectionalLight', () => {
+    const d = new THREE.DirectionalLight(0xffffff, 1);
+    d.position.set(10, 20, 5);
+    return 'ok';
+  });
+  t('I · Lights', 'PointLight', () => new THREE.PointLight(0xffaa66, 1, 100) && 'ok');
+  t('I · Lights', 'RectAreaLight', () => {
+    const r = new THREE.RectAreaLight(0xffffff, 10, 4, 2);
+    // .power was added as a derived getter in later revisions; check intrinsic props instead.
+    return `intensity=${r.intensity} w=${r.width} h=${r.height}`;
+  });
+
+  // ─── J. Textures ────────────────────────────────────────────
+  t('J · Textures', 'Texture (from Image)', () => {
+    const img = new Image();
+    const tex = new THREE.Texture(img);
+    tex.needsUpdate = false;
+    return 'ok';
+  });
+  t('J · Textures', 'CanvasTexture', () => {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const tex = new THREE.CanvasTexture(c);
+    return `image set: ${tex.image === c}`;
+  });
+  t('J · Textures', 'DataTexture (RGBA)', () => {
+    const data = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]);
+    const tex = new THREE.DataTexture(data, 2, 1, THREE.RGBAFormat);
+    tex.needsUpdate = true;
+    return `width=${tex.image.width}`;
+  });
+  t('J · Textures', 'Wrapping constants (RepeatWrapping)', () => {
+    if (typeof THREE.RepeatWrapping !== 'number') throw new Error('RepeatWrapping not numeric');
+    return `RepeatWrapping=${THREE.RepeatWrapping}`;
+  });
+  t('J · Textures', 'Filter constants (LinearMipmapLinearFilter)', () => {
+    if (typeof THREE.LinearMipmapLinearFilter !== 'number') throw new Error('not numeric');
+    return `value=${THREE.LinearMipmapLinearFilter}`;
+  });
+
+  // ─── K. Vendored addons ─────────────────────────────────────
+  t('K · Addons', 'GLTFLoader constructs', () => {
+    const l = new THREE.GLTFLoader();
+    return `parser=${typeof l.parse}`;
+  });
+  t('K · Addons', 'RectAreaLightUniformsLib.init()', () => {
+    THREE.RectAreaLightUniformsLib.init();
+    return 'init() returned';
+  });
+  t('K · Addons', 'Sky constructs', () => {
+    const s = new THREE.Sky();
+    return `geometry verts=${s.geometry.attributes.position.count}`;
+  });
+
+  // ─── L. Postprocessing chain ────────────────────────────────
+  t('L · Postprocess', 'EffectComposer + RenderPass', () => {
+    const ec = new THREE.EffectComposer(renderer);
+    const rp = new THREE.RenderPass(scene, camera);
+    ec.addPass(rp);
+    return `passes=${ec.passes.length}`;
+  });
+  t('L · Postprocess', 'CopyShader + ShaderPass', () => {
+    if (!THREE.CopyShader) throw new Error('CopyShader undefined');
+    const p = new THREE.ShaderPass(THREE.CopyShader);
+    return `uniforms=${Object.keys(p.uniforms).length}`;
+  });
+  t('L · Postprocess', 'FXAAShader + ShaderPass', () => {
+    if (!THREE.FXAAShader) throw new Error('FXAAShader undefined');
+    const p = new THREE.ShaderPass(THREE.FXAAShader);
+    return `uniforms=${Object.keys(p.uniforms).length}`;
+  });
+  t('L · Postprocess', 'UnrealBloomPass', () => {
+    const bp = new THREE.UnrealBloomPass(new THREE.Vector2(canvas.width, canvas.height), 0.6, 0.4, 0.8);
+    return `strength=${bp.strength}`;
+  });
+
+  // ─── M. Custom-shader compile smoke (real engine shaders) ──
+  t('M · Engine shaders', 'Plasma tinted vertex + fragment compile', () => {
+    const verts = `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      uniform float pointSize;
+      attribute float seed;
+      varying float vLife;
+      void main() {
+        vLife = seed;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
+        gl_PointSize = pointSize;
+      }`;
+    const frag = `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      uniform vec3 colorYoung;
+      uniform vec3 colorOld;
+      uniform float opacity;
+      varying float vLife;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        if (length(c) > 0.5) discard;
+        vec3 col = mix(colorYoung, colorOld, vLife);
+        gl_FragColor = vec4(col, opacity);
+        #include <logdepthbuf_fragment>
+      }`;
+    const m = new THREE.ShaderMaterial({
+      uniforms: {
+        pointSize:   { value: 9.5 },
+        opacity:     { value: 0.5 },
+        colorYoung:  { value: new THREE.Color(1, 0.5, 0.2) },
+        colorOld:    { value: new THREE.Color(0.3, 0, 0) }
+      },
+      vertexShader: verts, fragmentShader: frag,
+      blending: THREE.AdditiveBlending, transparent: true, depthWrite: false
+    });
+    // render to validate
+    const sc = new THREE.Scene();
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, 1,1,1], 3));
+    geom.setAttribute('seed',     new THREE.Float32BufferAttribute([0.0, 1.0], 1));
+    sc.add(new THREE.Points(geom, m));
+    renderer.render(sc, camera);
+    const gl = renderer.getContext();
+    const err = gl.getError();
+    if (err !== gl.NO_ERROR) throw new Error(`gl error ${err}`);
+    return `compiled + rendered`;
+  });
+
+  // ─── N. Misc constants ──────────────────────────────────────
+  t('N · Constants', 'AdditiveBlending', () => typeof THREE.AdditiveBlending === 'number' ? `=${THREE.AdditiveBlending}` : (() => { throw new Error('not numeric'); })());
+  t('N · Constants', 'NormalBlending',   () => typeof THREE.NormalBlending   === 'number' ? `=${THREE.NormalBlending}`   : (() => { throw new Error('not numeric'); })());
+  t('N · Constants', 'BackSide',         () => typeof THREE.BackSide         === 'number' ? `=${THREE.BackSide}`         : (() => { throw new Error('not numeric'); })());
+  t('N · Constants', 'DoubleSide',       () => typeof THREE.DoubleSide       === 'number' ? `=${THREE.DoubleSide}`       : (() => { throw new Error('not numeric'); })());
+  t('N · Constants', 'PCFSoftShadowMap', () => typeof THREE.PCFSoftShadowMap === 'number' ? `=${THREE.PCFSoftShadowMap}` : (() => { throw new Error('not numeric'); })());
+  t('N · Constants', 'RGBAFormat',       () => typeof THREE.RGBAFormat       === 'number' ? `=${THREE.RGBAFormat}`       : (() => { throw new Error('not numeric'); })());
+
+  // ─── O. Misc classes used in load/animation/cubemap paths ───
+  t('O · Misc', 'AnimationMixer', () => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial());
+    const mx = new THREE.AnimationMixer(m);
+    return `clipActions=${mx._actions.length}`;
+  });
+  t('O · Misc', 'WebGLCubeRenderTarget', () => {
+    const rt = new THREE.WebGLCubeRenderTarget(256, { format: THREE.RGBAFormat });
+    return `width=${rt.width}`;
+  });
+  t('O · Misc', 'CubeCamera', () => {
+    const rt = new THREE.WebGLCubeRenderTarget(64);
+    const cc = new THREE.CubeCamera(0.1, 100, rt);
+    return 'ok';
+  });
+
+  // ─── P. GLTF load smoke (async) ─────────────────────────────
+  let asyncDone = false;
+  function gltfLoadTest() {
+    return new Promise(resolve => {
+      const loader = new THREE.GLTFLoader();
+      const url = '../files/models/jahship.glb';
+      loader.load(url, (gltf) => {
+        let meshCount = 0;
+        gltf.scene.traverse(o => { if (o.isMesh) meshCount++; });
+        resolve({ pass: true, details: `meshes=${meshCount} animations=${gltf.animations.length}` });
+      }, undefined, (err) => {
+        resolve({ pass: false, details: `load error: ${err.message || err}` });
+      });
+    });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  //  Runner
+  // ────────────────────────────────────────────────────────────
+  async function runAll() {
+    results.innerHTML = '';
+    summary.className = 'summary running';
+    summary.textContent = 'running…';
+
+    let pass = 0, fail = 0;
+    const groups = {};
+    for (const test of TESTS) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      let res, ok = false, details = '';
+      try {
+        const out = test.fn();
+        if (out instanceof Promise) {
+          res = await out;
+          ok = !!res?.pass;
+          details = res?.details ?? '';
+        } else {
+          ok = true;
+          details = String(out ?? '');
+        }
+      } catch (e) {
+        ok = false;
+        details = e.message || String(e);
+      }
+      if (ok) pass++; else fail++;
+
+      // Stash in group bucket
+      (groups[test.group] = groups[test.group] || []).push({ name: test.name, ok, details });
+    }
+
+    // Async GLTF
+    const gltfRes = await gltfLoadTest();
+    if (gltfRes.pass) pass++; else fail++;
+    (groups['P · GLTF load'] = []).push({ name: 'GLTFLoader loads jahship.glb', ok: gltfRes.pass, details: gltfRes.details });
+
+    // Render groups
+    for (const gname of Object.keys(groups)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'group';
+      const h = document.createElement('div');
+      h.className = 'group-h';
+      h.textContent = gname;
+      wrap.appendChild(h);
+      for (const r of groups[gname]) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span class="mark ${r.ok ? 'pass' : 'fail'}">${r.ok ? '✓' : '✗'}</span>
+                         <span class="name">${escapeHTML(r.name)}</span>
+                         <span class="details ${r.ok ? '' : 'fail'}">${escapeHTML(r.details)}</span>`;
+        wrap.appendChild(row);
+      }
+      results.appendChild(wrap);
+    }
+    summary.className = 'summary ' + (fail === 0 ? 'pass' : 'fail');
+    summary.textContent = `${pass} passed, ${fail} failed (revision r${THREE.REVISION})`;
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+  }
+
+  // Auto-run on load
+  window.addEventListener('load', () => setTimeout(runAll, 50));
+  </script>
+</body>
+</html>
