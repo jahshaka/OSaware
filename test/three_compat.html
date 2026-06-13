@@ -385,9 +385,38 @@
     const p = new THREE.ShaderPass(THREE.FXAAShader);
     return `uniforms=${Object.keys(p.uniforms).length}`;
   });
+  t('L · Postprocess', 'FXAAShader has "resolution" uniform (engine writes to it)', () => {
+    const p = new THREE.ShaderPass(THREE.FXAAShader);
+    if (!p.material.uniforms.resolution) {
+      const have = Object.keys(p.material.uniforms).join(', ');
+      throw new Error(`resolution uniform missing; have: ${have}`);
+    }
+    // mimic gl3d.js:1802
+    p.material.uniforms['resolution'].value.set(1/640, 1/360);
+    return `set to (${p.material.uniforms.resolution.value.x.toFixed(5)}, ${p.material.uniforms.resolution.value.y.toFixed(5)})`;
+  });
   t('L · Postprocess', 'UnrealBloomPass', () => {
     const bp = new THREE.UnrealBloomPass(new THREE.Vector2(canvas.width, canvas.height), 0.6, 0.4, 0.8);
     return `strength=${bp.strength}`;
+  });
+  t('L · Postprocess', 'UnrealBloomPass strength/radius/threshold writable', () => {
+    const bp = new THREE.UnrealBloomPass(new THREE.Vector2(canvas.width, canvas.height), 0.6, 0.4, 0.8);
+    bp.strength = 1.0; bp.radius = 0.5; bp.threshold = 0.7;
+    if (bp.strength !== 1.0 || bp.radius !== 0.5 || bp.threshold !== 0.7) {
+      throw new Error(`writes didn't stick: ${bp.strength}/${bp.radius}/${bp.threshold}`);
+    }
+    return 'all three writable';
+  });
+  t('L · Postprocess', 'EffectComposer pass management (insert/remove)', () => {
+    const ec = new THREE.EffectComposer(renderer);
+    const rp = new THREE.RenderPass(scene, camera);
+    ec.addPass(rp);
+    const fxaa = new THREE.ShaderPass(THREE.FXAAShader);
+    ec.insertPass(fxaa, 1);
+    if (ec.passes.length !== 2) throw new Error(`insertPass: expected 2 passes, got ${ec.passes.length}`);
+    ec.removePass(fxaa);
+    if (ec.passes.length !== 1) throw new Error(`removePass: expected 1 pass, got ${ec.passes.length}`);
+    return 'addPass / insertPass / removePass all work';
   });
 
   // ─── M. Custom-shader compile smoke (real engine shaders) ──
