@@ -1,5 +1,28 @@
 'use strict';
 
+import * as C from '../constants.js';
+import * as THREE_NS                                   from 'three';
+import { GLTFLoader }                                  from 'three/addons/loaders/GLTFLoader.js';
+import { RectAreaLightUniformsLib }                    from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { Sky }                                         from 'three/addons/objects/Sky.js';
+import { CopyShader }                                  from 'three/addons/shaders/CopyShader.js';
+import { LuminosityHighPassShader }                    from 'three/addons/shaders/LuminosityHighPassShader.js';
+import { FXAAShader }                                  from 'three/addons/shaders/FXAAShader.js';
+import { EffectComposer }                              from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }                                  from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass }                                  from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass }                             from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// Local writable mirror of the THREE namespace + addons.  `import * as` returns
+// a sealed namespace exotic per the ES module spec, so we clone before attaching
+// addon symbols.  This preserves the engine's `THREE.GLTFLoader` access pattern.
+const THREE = { ...THREE_NS,
+  GLTFLoader, RectAreaLightUniformsLib, Sky,
+  CopyShader, LuminosityHighPassShader, FXAAShader,
+  EffectComposer, RenderPass, ShaderPass, UnrealBloomPass,
+};
+
+
 // ---------------------------------------------------------------------------
 // GL3DDriver  (drivers/gl3d.js)
 //
@@ -15,7 +38,7 @@
 //             and stores it as this._glDrv.
 // ---------------------------------------------------------------------------
 
-class GL3DDriver {
+export class GL3DDriver {
 
     constructor(host) {
         // host = the Interpreter instance that owns this driver
@@ -472,7 +495,7 @@ class GL3DDriver {
     cmdGLDEBUG() {
         const c = this._glCanvas;
         const g = this._gl;
-        if (!c && !g) { this.appendLine('GL: not initialised', 1); return CMD_OK; }
+        if (!c && !g) { this.appendLine('GL: not initialised', 1); return C.CMD_OK; }
         this.appendLine('-- GL DEBUG --', 1);
         this.appendLine('canvas: ' + (c ? (c.parentNode ? 'inDOM' : 'detached') + '  display:' + (c.style.display||'block') + '  z:' + c.style.zIndex : 'none'), 1);
         this.appendLine('_gl: ' + (g?'exists':'null') + '  three:' + (g&&g.three?'exists':'null') + '  meshes:' + (g?Object.keys(g.meshes||{}).length:0), 1);
@@ -498,7 +521,7 @@ class GL3DDriver {
             this.appendLine('gfxCanvas: ' + gfx.W+'x'+gfx.H + '  z:'+gs.zIndex + '  display:'+(gfx.canvas.style.display||'block'), 1);
         }
         this.appendLine('graphics-active: ' + (this.o ? this.o.classList.contains('graphics-active') : 'n/a'), 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_INIT() {
@@ -511,7 +534,7 @@ class GL3DDriver {
         }
         // Ensure the GL canvas is visible (may have been hidden on program stop)
         if (this._glCanvas) this._glCanvas.style.display = '';
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.CLOSE — tear down the GL renderer and restore the text terminal.
@@ -531,14 +554,14 @@ class GL3DDriver {
         if (this._spr) this._spr.canvas.style.display = 'none';
         if (this.o) this.o.classList.remove('graphics-active');
         this._graphicsActive = false;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_CLS(param) {
         this._activateGraphics();
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         this._glSyncCanvas();
         const parts = this._glParseFloats(param, 3);
         const r = (parts[0]||0)/255, gv = (parts[1]||0)/255, b = (parts[2]||0)/255;
@@ -549,21 +572,29 @@ class GL3DDriver {
         g._clearColor.setRGB(r, gv, b);
         t.renderer.setClearColor(g._clearColor, 1);
         t.renderer.clear();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
+    // GL.PERSPECTIVE fov [, far [, near]]
+    //   fov   — vertical field of view in degrees (defaults to 60)
+    //   far   — optional far clip plane (0 keeps current; default 1000)
+    //   near  — optional near clip plane (0 keeps current; default 1.0).
+    //           Lower it (e.g. 0.1) for games with small-scale geometry
+    //           or first-person cameras that approach walls closely.
     cmdGL_PERSPECTIVE(param) {
         const g = this._glState();
         const ntok = String(param || '').split(',').length;
-        const p = this._glParseFloats(param, 2);
+        const p = this._glParseFloats(param, 3);
         g.fov = p[0] || 60;
-        if (ntok > 1 && p[1] > 0) g.far = p[1];   // optional far clip plane
+        if (ntok > 1 && p[1] > 0) g.far  = p[1];
+        if (ntok > 2 && p[2] > 0) g.near = p[2];
         if (g.three) {
             g.three.camera.fov = g.fov;
-            if (g.far) g.three.camera.far = g.far;
+            if (g.far)  g.three.camera.far  = g.far;
+            if (g.near) g.three.camera.near = g.near;
             g.three.camera.updateProjectionMatrix();
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_CAMERA(param) {
@@ -574,7 +605,7 @@ class GL3DDriver {
             g.three.camera.position.set(g.cam[0], g.cam[1], g.cam[2]);
             this._glReorientCamera();
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_LOOKAT(param) {
@@ -582,7 +613,7 @@ class GL3DDriver {
         const g = this._glState();
         g.lookat = [p[0]||0, p[1]||0, p[2]||0];
         if (g.three) this._glReorientCamera();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.CAMERAROLL deg — bank the camera, rolling it `deg` degrees about its
@@ -590,10 +621,10 @@ class GL3DDriver {
     // Used by flight-style programs (SKYFOX) so the horizon tilts on a turn.
     cmdGL_CAMERAROLL(param) {
         const g = this._glState();
-        const deg = Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)) || 0;
+        const deg = Number(this.evalCalc(this.trim(String(param != null ? param : '0')), C.ASS_NUMBER)) || 0;
         g.camRoll = deg * Math.PI / 180;
         if (g.three) this._glReorientCamera();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Aim the camera at g.lookat, applying g.camRoll as a bank about the view
@@ -632,19 +663,19 @@ class GL3DDriver {
         // NOTE: 0 is a valid channel value — do NOT default it to 255 (that turned
         // GL.COLOUR 0,0,0 white and GL.COLOUR 0,n,n pink/magenta).
         this._glState().colour = [c(p[0]), c(p[1]), c(p[2])];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
-    cmdGL_WIRE()      { this._glState().mode = 'wire';      return CMD_OK; }
-    cmdGL_SOLID()     { this._glState().mode = 'solid';     return CMD_OK; }
-    cmdGL_SOLIDWIRE() { this._glState().mode = 'solidwire'; return CMD_OK; }
+    cmdGL_WIRE()      { this._glState().mode = 'wire';      return C.CMD_OK; }
+    cmdGL_SOLID()     { this._glState().mode = 'solid';     return C.CMD_OK; }
+    cmdGL_SOLIDWIRE() { this._glState().mode = 'solidwire'; return C.CMD_OK; }
     // GL.UNLIT — flat-colored mesh, no lighting calc (MeshBasicMaterial).
-    cmdGL_UNLIT()     { this._glState().mode = 'unlit';     return CMD_OK; }
+    cmdGL_UNLIT()     { this._glState().mode = 'unlit';     return C.CMD_OK; }
 
     // GL.WIREALL flag — 1: render every mesh in the scene as a wireframe with no
     // lighting (full ambient, directional light off);  0: restore shading + lights.
     cmdGL_WIREALL(param) {
-        const flag = !!Math.round(Number(this.evalCalc(this.trim(String(param||'0')), ASS_NUMBER)));
+        const flag = !!Math.round(Number(this.evalCalc(this.trim(String(param||'0')), C.ASS_NUMBER)));
         const g = this._glState();
         g.forceWire = flag;
         const t = g.three;
@@ -665,7 +696,7 @@ class GL3DDriver {
                 t._savedAmbInt = undefined; t._savedDirInt = undefined;
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.LIGHT dirX, dirY, dirZ [, intensity]
@@ -681,7 +712,7 @@ class GL3DDriver {
             g.three.dirLight.position.set(g.light[0], g.light[1], g.light[2]);
             g.three.dirLight.intensity = (p[3] !== undefined) ? p[3] : (1 - g.ambient) * 0.7;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.REMATERIAL meshid — rebuild the material on an existing mesh
@@ -693,11 +724,11 @@ class GL3DDriver {
     cmdGL_REMATERIAL(param) {
         const g = this._glState();
         const t = g.three;
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 1);
         const id = Math.floor(p[0] || 0);
         const m = g.meshes[id];
-        if (!m || !m._threeObjects) return CMD_OK;
+        if (!m || !m._threeObjects) return C.CMD_OK;
         const [r, gv, b] = g.colour;
         const color = new THREE.Color(r/255, gv/255, b/255);
         const opacity = g.alpha;
@@ -728,7 +759,7 @@ class GL3DDriver {
         m.shine     = g.shine;
         m.alpha     = g.alpha;
         m.emissive  = [...g.emissive];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.SMOOTH [n] — three-state shading mode for subsequent built meshes:
@@ -747,7 +778,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 1);
         const v = (p[0] != null) ? (p[0] | 0) : 1;
         g.smooth = Math.max(0, Math.min(2, v));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.PIXELRATIO ratio — set the renderer's effective pixel ratio. Lower
@@ -757,7 +788,7 @@ class GL3DDriver {
     cmdGL_PIXELRATIO(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 1);
         const max = window.devicePixelRatio || 1;
         let r = (p[0] && p[0] > 0) ? p[0] : Math.min(max, 1.5);
@@ -772,7 +803,7 @@ class GL3DDriver {
                 t.camera.updateProjectionMatrix();
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.LIGHTOFF — turn the directional light off (ambient + emissives still apply)
@@ -780,18 +811,18 @@ class GL3DDriver {
         const g = this._glState();
         g.light = null;
         if (g.three && g.three.dirLight) g.three.dirLight.intensity = 0;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_AMBIENT(param) {
-        const v = Number(this.evalCalc(this.trim(String(param||'0.25')), ASS_NUMBER));
+        const v = Number(this.evalCalc(this.trim(String(param||'0.25')), C.ASS_NUMBER));
         const g = this._glState();
         g.ambient = Math.max(0, Math.min(1, v));
         if (g.three) {
             g.three.ambientLight.intensity = g.ambient;
             if (g.light) g.three.dirLight.intensity = (1 - g.ambient) * 0.7;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_BEGIN() {
@@ -805,29 +836,29 @@ class GL3DDriver {
             emissive:  [...g.emissive],
             textureName: null,
         };
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_VERTEX(param) {
         const p = this._glParseFloats(param, 3);
         const g = this._glState();
-        if (!g.building) return CMD_ESYNTAX;
+        if (!g.building) return C.CMD_ESYNTAX;
         g.building.verts.push([p[0]||0, p[1]||0, p[2]||0]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_FACE(param) {
         const g = this._glState();
-        if (!g.building) return CMD_ESYNTAX;
+        if (!g.building) return C.CMD_ESYNTAX;
         const p = this._glParseFloats(param, 4);
         const face = p.filter((v,i) => i < 4 && v > 0).map(Math.round);
         if (face.length >= 3) g.building.faces.push(face);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_END() {
         const g = this._glState();
-        if (!g.building) return CMD_ESYNTAX;
+        if (!g.building) return C.CMD_ESYNTAX;
         const id = g.nextId++;
         g.meshes[id] = Object.assign(g.building, {
             id, tx:0, ty:0, tz:0, rx:0, ry:0, rz:0, sx:1, sy:1, sz:1,
@@ -835,19 +866,19 @@ class GL3DDriver {
         });
         g.lastId = id;
         g.building = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_TRANSLATE(param) {
         const p = this._glParseFloats(param, 4);
         const g = this._glState();
         const m = g.meshes[Math.round(p[0])];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.tx = p[1]||0; m.ty = p[2]||0; m.tz = p[3]||0;
         if (m._threeObjects) {
             for (const obj of m._threeObjects) obj.position.set(m.tx, m.ty, m.tz);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PBR id, metalness, roughness — adjust PBR material properties on a
@@ -866,7 +897,7 @@ class GL3DDriver {
         const g = this._glState();
         const p = this._glParseFloats(param, 3);
         const m = g.meshes[Math.round(p[0])];
-        if (!m || !m._threeObjects) return CMD_OK;
+        if (!m || !m._threeObjects) return C.CMD_OK;
         const metalness = (p[1] !== undefined) ? p[1] : 0.0;
         const roughness = (p[2] !== undefined) ? p[2] : 0.6;
         for (const obj of m._threeObjects) {
@@ -880,7 +911,7 @@ class GL3DDriver {
                 }
             });
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARENT child_id, parent_id — re-parent child mesh under parent mesh's
@@ -893,9 +924,9 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 2);
         const g = this._glState();
         const t = g.three;
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const child = g.meshes[Math.round(p[0])];
-        if (!child || !child._threeObjects || !child._threeObjects.length) return CMD_OK;
+        if (!child || !child._threeObjects || !child._threeObjects.length) return C.CMD_OK;
         const childObj = child._threeObjects[0];
         const parentId = Math.round(p[1]);
         let target = t.scene;
@@ -906,7 +937,7 @@ class GL3DDriver {
             }
         }
         target.attach(childObj);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARTICLES preset$, count [, youngR, youngG, youngB, oldR, oldG, oldB]
@@ -922,12 +953,12 @@ class GL3DDriver {
     cmdGL_PARTICLES(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const parts = this._glSplitTopComma(String(param || '')).map(s => s.trim());
         const preset = (parts[0] || '').replace(/^['"]|['"]$/g, '').toLowerCase();
         // evalCalc (not parseFloat) so BASIC variables resolve. parseFloat("PCY1")
         // returns NaN and silently produces invisible particles.
-        const ev = (s) => Number(this.evalCalc(s, ASS_NUMBER));
+        const ev = (s) => Number(this.evalCalc(s, C.ASS_NUMBER));
         const count = Math.min(2000, Math.max(1, Math.round(ev(parts[1] || '150'))));
         // Optional colour overrides (each preset has its own defaults if these are absent)
         const colorArgs = (parts.length >= 8) ? {
@@ -951,7 +982,7 @@ class GL3DDriver {
         const builder = g._particlePresets[preset];
         if (!builder) {
             if (typeof console !== 'undefined') console.warn('GL.PARTICLES: unknown preset "' + preset + '"');
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const built = builder({ count, color: colorArgs, trail: trailArg, spread: spreadArg });
         const { points, uniforms } = built;
@@ -969,7 +1000,7 @@ class GL3DDriver {
             _particleUniforms: uniforms };
         g.meshes[id] = fm;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // Internal: build the fire-preset particle system. `defaults` carries
@@ -1355,7 +1386,7 @@ class GL3DDriver {
 // custom value = slow-mo / fast-forward override.
     cmdGL_PARTICLES_TICK(param) {
         const g = this._glState();
-        if (!g._particleSystems || !g._particleSystems.length) return CMD_OK;
+        if (!g._particleSystems || !g._particleSystems.length) return C.CMD_OK;
         // Check param directly — DON'T use _glParseFloats here because that
         // helper returns [0] for empty input (filled with zeros), which would
         // make us think the user passed an explicit dt=0 and skip the clock.
@@ -1382,7 +1413,7 @@ class GL3DDriver {
         for (const sys of g._particleSystems) {
             sys.uniforms.time.value = g._particleTime;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARTICLES_PARAM id, name$, value
@@ -1392,18 +1423,18 @@ class GL3DDriver {
     cmdGL_PARTICLES_PARAM(param) {
         const g = this._glState();
         const parts = this._glSplitTopComma(String(param || '')).map(s => s.trim());
-        if (parts.length < 3) return CMD_OK;
+        if (parts.length < 3) return C.CMD_OK;
         // CRITICAL: use evalCalc (not parseFloat) so BASIC variables resolve.
         // parseFloat("EXHID") returns NaN; evalCalc looks the variable up.
-        const id    = Math.round(Number(this.evalCalc(parts[0], ASS_NUMBER)));
+        const id    = Math.round(Number(this.evalCalc(parts[0], C.ASS_NUMBER)));
         const name  = parts[1].replace(/^['"]|['"]$/g, '');
-        const value = Number(this.evalCalc(parts[2], ASS_NUMBER));
+        const value = Number(this.evalCalc(parts[2], C.ASS_NUMBER));
         const m = g.meshes[id];
-        if (!m || !m._particleUniforms) return CMD_OK;
+        if (!m || !m._particleUniforms) return C.CMD_OK;
         if (m._particleUniforms[name]) {
             m._particleUniforms[name].value = value;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARTICLES_EMIT id, flag — start (flag>0) or stop (flag=0) particle
@@ -1418,7 +1449,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param || '', 2);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m || !m._particleUniforms || !m._particleUniforms.emitCutoff) return CMD_OK;
+        if (!m || !m._particleUniforms || !m._particleUniforms.emitCutoff) return C.CMD_OK;
         const flag = (p[1] > 0);
         if (flag) {
             m._particleUniforms.emitCutoff.value = 1e9;
@@ -1430,7 +1461,7 @@ class GL3DDriver {
             // to cycle through.
             m._particleUniforms.emitCutoff.value = -1e9;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARTICLES_VISIBLE id, flag — explicitly show (flag>0) or hide (flag=0)
@@ -1441,10 +1472,10 @@ class GL3DDriver {
         const p = this._glParseFloats(param || '', 2);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m || !m._threeObjects) return CMD_OK;
+        if (!m || !m._threeObjects) return C.CMD_OK;
         const flag = (p[1] > 0);
         for (const obj of m._threeObjects) obj.visible = flag;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PARTICLES_COLOR id, youngR, youngG, youngB, oldR, oldG, oldB
@@ -1454,17 +1485,17 @@ class GL3DDriver {
         const p = this._glParseFloats(param || '', 7);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m || !m._particleUniforms) return CMD_OK;
+        if (!m || !m._particleUniforms) return C.CMD_OK;
         m._particleUniforms.colorYoung.value.setRGB(p[1]/255, p[2]/255, p[3]/255);
         m._particleUniforms.colorOld.value.setRGB(p[4]/255, p[5]/255, p[6]/255);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_ROTATE(param) {
         const p = this._glParseFloats(param, 4);
         const g = this._glState();
         const m = g.meshes[Math.round(p[0])];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.rx = p[1]||0; m.ry = p[2]||0; m.rz = p[3]||0;
         if (m._threeObjects) {
             const D = Math.PI/180;
@@ -1476,14 +1507,14 @@ class GL3DDriver {
             for (const obj of m._threeObjects)
                 obj.rotation.set(m.rx*D, m.ry*D, m.rz*D, 'YXZ');
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_SCALE(param) {
         const p = this._glParseFloats(param, 4);
         const g = this._glState();
         const m = g.meshes[Math.round(p[0])];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.sx = p[1] !== undefined ? p[1] : 1;
         m.sy = p[2] !== undefined ? p[2] : 1;
         m.sz = p[3] !== undefined ? p[3] : 1;
@@ -1500,16 +1531,16 @@ class GL3DDriver {
                 obj.visible = !allZero;
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_DRAW(param) {
         const g = this._glState();
-        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
+        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), C.ASS_NUMBER)));
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         // Rebuild mesh if mode changed or not yet built
         if (!m._threeObjects || m._builtMode !== g.mode) this._glSyncMesh(m, g);
         this._glSyncCanvas();
@@ -1525,13 +1556,13 @@ class GL3DDriver {
             }
         }
         this._glRenderFrame(t);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_DRAWALL() {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         for (const m of Object.values(g.meshes)) {
             if (!m._threeObjects || m._builtMode !== g.mode) {
                 // Self-contained meshes own their THREE objects directly and
@@ -1558,7 +1589,7 @@ class GL3DDriver {
             }
         }
         this._glRenderFrame(t);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Render one frame — through the bloom EffectComposer if active, else direct.
@@ -1702,7 +1733,7 @@ class GL3DDriver {
         const p = g._profile;
         if (!p || p.frameCount === 0) {
             this.appendLine('GL profile: no frames rendered yet', 0);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const wallMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - p.start;
         const avgMs  = p.renderMsSum / p.frameCount;
@@ -1740,7 +1771,7 @@ class GL3DDriver {
                 this.appendLine(line, 0);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Ensure an EffectComposer (RenderPass only) exists on `t`. Once active, frames render through
@@ -1758,17 +1789,17 @@ class GL3DDriver {
     cmdGL_BLOOM(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 3);
         const strength = p[0] || 0;
         if (strength <= 0) {
             if (t.composer && t.bloomPass) { t.composer.removePass(t.bloomPass); t.bloomPass = null; }
-            return CMD_OK;
+            return C.CMD_OK;
         }
-        if (!THREE.UnrealBloomPass) return CMD_OK; // post-fx libs not loaded
+        if (!THREE.UnrealBloomPass) return C.CMD_OK; // post-fx libs not loaded
         const c = this._glEnsureComposer(t);
-        if (!c) return CMD_OK;
+        if (!c) return C.CMD_OK;
         const radius    = ntok > 1 ? p[1] : 0.4;
         const threshold = ntok > 2 ? p[2] : 0.3;
         if (!t.bloomPass) {
@@ -1781,21 +1812,21 @@ class GL3DDriver {
         } else {
             t.bloomPass.strength = strength; t.bloomPass.radius = radius; t.bloomPass.threshold = threshold;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.AA flag — anti-aliasing via an FXAA post-process pass. 1 = on, 0 = off (aliased).
     // Uses the EffectComposer (creating it if needed); cheap, so it doesn't cost the speed.
     cmdGL_AA(param) {
-        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), C.ASS_NUMBER)));
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         g.aaOn = on;
         if (on) {
-            if (!THREE.FXAAShader || !THREE.ShaderPass) return CMD_OK;
+            if (!THREE.FXAAShader || !THREE.ShaderPass) return C.CMD_OK;
             const c = this._glEnsureComposer(t);
-            if (!c) return CMD_OK;
+            if (!c) return C.CMD_OK;
             if (!t.fxaaPass) {
                 const sz = new THREE.Vector2(); t.renderer.getDrawingBufferSize(sz);
                 t.fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
@@ -1809,7 +1840,7 @@ class GL3DDriver {
             t.composer.removePass(t.fxaaPass);
             t.fxaaPass = null;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.FPS flag — 1: show a "Ticks per second: N" overlay (top-right); 0: hide it.
@@ -1817,7 +1848,7 @@ class GL3DDriver {
     // the real, vsync-aligned framerate use GL.RFPS instead.
     // System-level — the counting and the overlay live here, not in BASIC.
     cmdGL_FPS(param) {
-        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), C.ASS_NUMBER)));
         const g = this._glState();
         g.fpsOn = on;
         if (on) {
@@ -1833,7 +1864,7 @@ class GL3DDriver {
         } else if (this._fpsDiv) {
             this._fpsDiv.style.display = 'none';
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Hide both FPS overlays and stop the RFPS rAF loop. Called from the
@@ -1854,7 +1885,7 @@ class GL3DDriver {
     // Independent of GL command activity — keeps ticking even when BASIC is
     // idle in a SLEEP, so you see what the browser is actually painting.
     cmdGL_RFPS(param) {
-        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), ASS_NUMBER)));
+        const on = !!Math.round(Number(this.evalCalc(this.trim(String(param != null ? param : '0')), C.ASS_NUMBER)));
         if (on) {
             if (!this._rfpsDiv) {
                 const d = document.createElement('div');
@@ -1888,23 +1919,23 @@ class GL3DDriver {
             this._rfpsDiv.style.display = 'none';
             if (this._rfpsRAF) { cancelAnimationFrame(this._rfpsRAF); this._rfpsRAF = 0; }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // ---- Extended GL commands ------------------------------------------------
 
 // GL.SHINE n — set specular shininess for subsequent meshes (0-200)
     cmdGL_SHINE(param) {
-        const v = Number(this.evalCalc(this.trim(String(param||'30')), ASS_NUMBER));
+        const v = Number(this.evalCalc(this.trim(String(param||'30')), C.ASS_NUMBER));
         this._glState().shine = Math.max(0, Math.min(200, v));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.ALPHA n — set opacity for subsequent meshes (0.0-1.0)
     cmdGL_ALPHA(param) {
-        const v = Number(this.evalCalc(this.trim(String(param||'1')), ASS_NUMBER));
+        const v = Number(this.evalCalc(this.trim(String(param||'1')), C.ASS_NUMBER));
         this._glState().alpha = Math.max(0, Math.min(1, v));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.EMISSIVE r,g,b — set emissive glow colour (0-255 each)
@@ -1914,7 +1945,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 3);
         const c = v => Math.max(0, Math.min(255, Math.round(v || 0)));
         this._glState().wireColor = [c(p[0]), c(p[1]), c(p[2])];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.TEXTURE id, name$ [, repeat] — apply stored image as texture
@@ -1923,21 +1954,21 @@ class GL3DDriver {
         const parts = this._glParseFloats(param, 1);
         const id = Math.round(parts[0]);
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const raw = this.trim(String(param||''));
         const ci = raw.indexOf(',');
-        if (ci < 0) return CMD_OK;
+        if (ci < 0) return C.CMD_OK;
         const rest = this.trim(raw.substring(ci+1));
         // Find optional second comma for repeat
         const ci2 = rest.indexOf(',');
         let nameRaw = ci2 >= 0 ? this.trim(rest.substring(0, ci2)) : rest;
-        let repeat  = ci2 >= 0 ? Number(this.evalCalc(this.trim(rest.substring(ci2+1)), ASS_NUMBER)) : 4;
+        let repeat  = ci2 >= 0 ? Number(this.evalCalc(this.trim(rest.substring(ci2+1)), C.ASS_NUMBER)) : 4;
         if (nameRaw.startsWith('"') && nameRaw.endsWith('"')) nameRaw = nameRaw.slice(1,-1);
-        else nameRaw = String(this.lookup_(ASS_STRING, nameRaw.toUpperCase()));
+        else nameRaw = String(this.lookup_(C.ASS_STRING, nameRaw.toUpperCase()));
         m.textureName   = nameRaw;
         m.textureRepeat = repeat || 4;
         m._builtMode = null;  // force rebuild
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // -----------------------------------------------------------------------
@@ -1956,82 +1987,82 @@ class GL3DDriver {
         const raw = this.trim(String(param || ''));
         const ci = raw.indexOf(',');
         if (ci < 0) return null;
-        const id = Math.round(Number(this.evalCalc(raw.substring(0, ci).trim(), ASS_NUMBER)));
+        const id = Math.round(Number(this.evalCalc(raw.substring(0, ci).trim(), C.ASS_NUMBER)));
         const rest = raw.substring(ci + 1).trim();
         const ci2 = rest.indexOf(',');
         let nameRaw = ci2 >= 0 ? rest.substring(0, ci2).trim() : rest;
-        const extra = ci2 >= 0 ? Number(this.evalCalc(rest.substring(ci2 + 1).trim(), ASS_NUMBER)) : null;
+        const extra = ci2 >= 0 ? Number(this.evalCalc(rest.substring(ci2 + 1).trim(), C.ASS_NUMBER)) : null;
         if (nameRaw.startsWith('"') && nameRaw.endsWith('"')) nameRaw = nameRaw.slice(1, -1);
-        else nameRaw = String(this.lookup_(ASS_STRING, nameRaw.toUpperCase()) || nameRaw);
+        else nameRaw = String(this.lookup_(C.ASS_STRING, nameRaw.toUpperCase()) || nameRaw);
         return { id, name: nameRaw, extra };
     }
 
     cmdGL_NORMALMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.normalMapName = p.name;
         m._builtMode = null;  // force rebuild
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_ROUGHMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.roughMapName = p.name;
         m._builtMode = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_AOMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.aoMapName    = p.name;
         m.aoIntensity  = p.extra !== null ? p.extra : 1.0;
         m._builtMode   = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_HEIGHTMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.heightMapName = p.name;
         m.heightScale   = p.extra !== null ? p.extra : 0.05;
         m._builtMode    = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_METALMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.metalMapName = p.name;
         m._builtMode   = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGL_EMISSIVEMAP(param) {
         const g = this._glState();
         const p = this._glParsePBRParam(param);
-        if (!p) return CMD_ESYNTAX;
+        if (!p) return C.CMD_ESYNTAX;
         const m = g.meshes[p.id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         m.emissiveMapName = p.name;
         m._builtMode      = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.EMISSIVE id, r, g, b  — set emissive colour scalar (0-255 each channel)
@@ -2045,13 +2076,13 @@ class GL3DDriver {
             // GL.EMISSIVE r,g,b — self-glow colour for subsequently built meshes
             const p = this._glParseFloats(param, 3);
             g.emissive = [c(p[0]), c(p[1]), c(p[2])];
-            return CMD_OK;
+            return C.CMD_OK;
         }
         // GL.EMISSIVE id, r, g, b — recolour an existing mesh's emissive (used with GL.EMISSIVEMAP)
         const p = this._glParseFloats(param, 4);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const r = c(p[1])/255, gv = c(p[2])/255, b = c(p[3])/255;
         m.emissiveColor = [c(p[1]), c(p[2]), c(p[3])];
         if (m._threeObjects) {
@@ -2065,7 +2096,7 @@ class GL3DDriver {
                 });
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.EMISSIVEINTENSITY id, value — multiplier on emissive brightness (default 1.0)
@@ -2075,7 +2106,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 2);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const val = Math.max(0, p[1] !== undefined ? p[1] : 1.0);
         m.emissiveIntensity = val;
         if (m._threeObjects) {
@@ -2095,7 +2126,7 @@ class GL3DDriver {
                 });
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.ROUGHNESS id, value  — set roughness scalar (0.0=mirror, 1.0=matte)
@@ -2105,7 +2136,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 2);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const val = Math.max(0, Math.min(1, p[1] !== undefined ? p[1] : 0.5));
         m.roughnessVal = val;
         // Apply immediately to live material if already built
@@ -2117,7 +2148,7 @@ class GL3DDriver {
                 }
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.METALNESS id, value  — set metalness scalar (0.0=non-metal, 1.0=full metal)
@@ -2127,7 +2158,7 @@ class GL3DDriver {
         const p = this._glParseFloats(param, 2);
         const id = Math.round(p[0]);
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const val = Math.max(0, Math.min(1, p[1] !== undefined ? p[1] : 1.0));
         m.metalnessVal = val;
         if (m._threeObjects) {
@@ -2138,7 +2169,7 @@ class GL3DDriver {
                 }
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.ENVMAP id [, size]
@@ -2153,12 +2184,12 @@ class GL3DDriver {
     cmdGL_ENVMAP(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 2);
         const id   = Math.round(p[0]);
         const size = p[1] > 0 ? Math.round(p[1]) : 128;
         const m = g.meshes[id];
-        if (!m || !m._threeObjects || !m._threeObjects[0]) return CMD_OK;
+        if (!m || !m._threeObjects || !m._threeObjects[0]) return C.CMD_OK;
 
         // Remove any existing cube camera on this mesh first
         if (m._cubeCamera) {
@@ -2191,7 +2222,7 @@ class GL3DDriver {
         // Avoid duplicates
         if (!g.three._chromeMeshes.includes(m)) g.three._chromeMeshes.push(m);
 
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.POINTLIGHT x,y,z [,r,g,b [,intensity [,distance [,shadow]]]] — add a point light
@@ -2201,7 +2232,7 @@ class GL3DDriver {
     cmdGL_POINTLIGHT(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 9);
         const cc = v => Math.max(0, Math.min(255, v)) / 255;
@@ -2223,7 +2254,7 @@ class GL3DDriver {
         t.scene.add(light);
         if (!g.pointLights) g.pointLights = [];
         g.pointLights.push(light);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.HEADLIGHT x,y,z [, r,g,b [, intensity [, distance]]]
@@ -2237,7 +2268,7 @@ class GL3DDriver {
     cmdGL_HEADLIGHT(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 8);
         const cc = v => Math.max(0, Math.min(255, v)) / 255;
@@ -2261,7 +2292,7 @@ class GL3DDriver {
             light.distance  = distance;
         }
         light.position.set(p[0]||0, p[1]||0, p[2]||0);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // GL.RECTLIGHT x,y,z, w,h [, r,g,b [, intensity]] — rectangular area light, faces straight down.
@@ -2270,7 +2301,7 @@ class GL3DDriver {
     cmdGL_RECTLIGHT(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         if (THREE.RectAreaLightUniformsLib && !g._rectLibInit) { THREE.RectAreaLightUniformsLib.init(); g._rectLibInit = true; }
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 9);
@@ -2287,7 +2318,7 @@ class GL3DDriver {
         t.scene.add(light);
         if (!g.rectLights) g.rectLights = [];
         g.rectLights.push(light);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.LIGHTSOFF — remove all point lights, rect lights, and the headlight
@@ -2312,7 +2343,7 @@ class GL3DDriver {
             g.three.scene.remove(l);
             g._headlight = null;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.HIDE id — make a mesh invisible. Leaves it in the scene graph and on
@@ -2320,20 +2351,20 @@ class GL3DDriver {
 // to actually free the geometry/material and reclaim the id.
     cmdGL_HIDE(param) {
         const g = this._glState();
-        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
+        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), C.ASS_NUMBER)));
         const m = g.meshes[id];
         if (m && m._threeObjects) {
             for (const o of m._threeObjects) o.visible = false;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.DISPOSE id — completely remove and free a mesh and all its GPU resources
     cmdGL_DISPOSE(param) {
         const g = this._glState();
-        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
+        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), C.ASS_NUMBER)));
         const m = g.meshes[id];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         // Loaded models (GL.LOAD) are a Three.js Group hierarchy — walk it and
         // free every child mesh's geometry/material/textures, plus the animation mixer.
         if (m._isLoaded && m._threeObjects && m._threeObjects[0] && m._threeObjects[0].traverse) {
@@ -2357,7 +2388,7 @@ class GL3DDriver {
             });
             if (m._mixer) { try { m._mixer.stopAllAction(); } catch (e) {} m._mixer = null; }
             delete g.meshes[id];
-            return CMD_OK;
+            return C.CMD_OK;
         }
         if (m._threeObjects) {
             const t = g.three;
@@ -2379,14 +2410,14 @@ class GL3DDriver {
             }
         }
         delete g.meshes[id];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.SHOW id — make a previously hidden mesh visible again
     cmdGL_SHOW(param) {
         const g = this._glState();
         const t = g.three;
-        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), ASS_NUMBER)));
+        const id = Math.round(Number(this.evalCalc(this.trim(String(param||'')), C.ASS_NUMBER)));
         const m = g.meshes[id];
         if (m && m._threeObjects) {
             for (const o of m._threeObjects) {
@@ -2397,14 +2428,14 @@ class GL3DDriver {
                 if (t && t.scene && !o.parent) t.scene.add(o);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.FOG r,g,b, near, far — enable linear fog
     cmdGL_FOG(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 5);
         const fogColor = new THREE.Color(p[0]/255, p[1]/255, p[2]/255);
         t.scene.fog = new THREE.Fog(fogColor, p[3]||5, p[4]||20);
@@ -2417,7 +2448,7 @@ class GL3DDriver {
             tu.uFogNear.value = p[3] || 5;
             tu.uFogFar.value  = p[4] || 20;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.FOGOFF — disable fog
@@ -2434,7 +2465,7 @@ class GL3DDriver {
             g._terrain.material.uniforms.uFogNear.value = 1.0e8;
             g._terrain.material.uniforms.uFogFar.value  = 1.0e9;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.CLOUDS flag [, coverage [, altitude [, thickness]]] — raymarched
@@ -2446,7 +2477,7 @@ class GL3DDriver {
     cmdGL_CLOUDS(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 4);
         if (g._clouds) {
@@ -2455,7 +2486,7 @@ class GL3DDriver {
             if (g._clouds.material) g._clouds.material.dispose();
             g._clouds = null;
         }
-        if (!(p[0] > 0)) return CMD_OK;
+        if (!(p[0] > 0)) return C.CMD_OK;
         const coverage  = ntok > 1 ? Math.max(0, Math.min(1, p[1])) : 0.5;
         const altitude  = ntok > 2 ? p[2] : 50;
         const thickness = ntok > 3 ? Math.max(2, p[3]) : 40;
@@ -2482,7 +2513,7 @@ class GL3DDriver {
         mesh.renderOrder   = 999;
         t.scene.add(mesh);
         g._clouds = mesh;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _cloudVertSrc() {
@@ -2600,7 +2631,7 @@ void main() {
     cmdGL_SKY(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 5);
         if (g._sky) {
@@ -2609,10 +2640,10 @@ void main() {
             if (g._sky.geometry) g._sky.geometry.dispose();
             g._sky = null;
         }
-        if (!(p[0] > 0)) return CMD_OK;
+        if (!(p[0] > 0)) return C.CMD_OK;
         if (typeof THREE.Sky !== 'function') {
             this.appendLine('GL.SKY: Sky addon not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         // defaults match the official three.js webgl_shaders_sky example
         const elevation = ntok > 1 ? p[1] : 2;
@@ -2633,7 +2664,7 @@ void main() {
         u['sunPosition'].value.setFromSphericalCoords(1, phi, theta);
         t.scene.add(sky);
         g._sky = sky;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.TERRAIN flag [, size [, segments [, height [, cx [, cz]]]]] — replaces a
@@ -2645,7 +2676,7 @@ void main() {
     cmdGL_TERRAIN(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const ntok = String(param || '').split(',').length;
         const p = this._glParseFloats(param, 8);
         const disposeTerrain = () => {
@@ -2656,7 +2687,7 @@ void main() {
             g._terrain = null;
             g._terrainH = null;
         };
-        if (!(p[0] > 0)) { disposeTerrain(); return CMD_OK; }
+        if (!(p[0] > 0)) { disposeTerrain(); return C.CMD_OK; }
         const size   = ntok > 1 ? p[1] : 2000;
         const segs   = ntok > 2 ? Math.max(2, Math.min(240, Math.round(p[2]))) : 64;
         const height = ntok > 3 ? p[3] : 30;
@@ -2670,7 +2701,7 @@ void main() {
             if (tp[0] === size && tp[1] === segs && tp[2] === height &&
                 tp[3] === hills && tp[4] === cx && tp[5] === cz) {
                 g._terrain.material.uniforms.uGrid.value = mode;
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
         disposeTerrain();
@@ -2764,7 +2795,7 @@ void main() {
             if (x < -half || x > half || z < -half || z > half) return 0;
             return heightAt(x, z);
         };
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _terrainVertSrc() {
@@ -2855,23 +2886,23 @@ void main() {
 //     terrain + 24-pt path at samplesPer=24 runs in <100ms on a modern CPU.
     cmdGL_TERRAIN_CARVE(param) {
         const g = this._glState();
-        if (!g._terrain || !g._terrain.geometry) return CMD_OK;
+        if (!g._terrain || !g._terrain.geometry) return C.CMD_OK;
         const p = this._glParseFloats(param, 4);
         const lineId    = Math.round(p[0]);
         const halfWidth = Math.max(0, p[1] || 0);
         const yOffset   = (p[2] !== undefined) ? p[2] : 0;
         const falloff   = Math.max(0, p[3] || 0);
-        if (halfWidth <= 0) return CMD_OK;
+        if (halfWidth <= 0) return C.CMD_OK;
         const lineMesh = g.meshes[lineId];
-        if (!lineMesh || !lineMesh._threeObjects || !lineMesh._threeObjects[0]) return CMD_OK;
+        if (!lineMesh || !lineMesh._threeObjects || !lineMesh._threeObjects[0]) return C.CMD_OK;
         const lineObj  = lineMesh._threeObjects[0];
         const lineGeom = lineObj.geometry;
-        if (!lineGeom || !lineGeom.attributes || !lineGeom.attributes.position) return CMD_OK;
+        if (!lineGeom || !lineGeom.attributes || !lineGeom.attributes.position) return C.CMD_OK;
         // Cache spline samples in world space (the line mesh may have been
         // GL.TRANSLATEd — its position offset must be added to each sample).
         const linePos = lineGeom.attributes.position;
         const lineCount = linePos.count;
-        if (lineCount < 2) return CMD_OK;
+        if (lineCount < 2) return C.CMD_OK;
         const sx = lineObj.position.x, sy = lineObj.position.y, sz = lineObj.position.z;
         const sampleX = new Float32Array(lineCount);
         const sampleY = new Float32Array(lineCount);
@@ -2915,7 +2946,7 @@ void main() {
         }
         tPos.needsUpdate = true;
         g._terrain.geometry.computeBoundingSphere();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PROBE x, z — sample the GL.TERRAIN surface height at world (x,z).
@@ -2923,10 +2954,10 @@ void main() {
     cmdGL_PROBE(param) {
         const g = this._glState();
         const parts = String(param || '').split(',');
-        const x = Number(this.evalCalc(this.trim(parts[0] || '0'), ASS_NUMBER)) || 0;
-        const z = Number(this.evalCalc(this.trim(parts[1] || '0'), ASS_NUMBER)) || 0;
+        const x = Number(this.evalCalc(this.trim(parts[0] || '0'), C.ASS_NUMBER)) || 0;
+        const z = Number(this.evalCalc(this.trim(parts[1] || '0'), C.ASS_NUMBER)) || 0;
         g._probeY = g._terrainH ? g._terrainH(x, z) : 0;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.SCANFWD x, z, yaw, fromDist, toDist — scan terrain along a forward ray.
@@ -2949,7 +2980,7 @@ void main() {
         g._scanY = peakY === -Infinity ? 0 : peakY;
         g._scanD = peakD;
         g._scanS = sumY / samples;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.OBSTACLE x, y, z, radius — register a sphere obstacle for OBSTACLEHIT queries.
@@ -2960,7 +2991,7 @@ void main() {
         const p = this._glParseFloats(param, 4);
         g._obstacles.push({ x: p[0]||0, y: p[1]||0, z: p[2]||0, r: p[3]||1 });
         g._lastObstId = g._obstacles.length - 1;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.OBSTACLEHIT x, z, radius — find nearest obstacle whose XZ circle overlaps query.
@@ -2979,7 +3010,7 @@ void main() {
         }
         g._obstHitID = bestId;
         g._obstHitDist = bestId >= 0 ? bestDist : 0;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.OBSTACLECLEAR — remove all registered obstacles.
@@ -2987,7 +3018,7 @@ void main() {
         const g = this._glState();
         g._obstacles = [];
         g._lastObstId = -1;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // AIG_NAVIGATE y, cruiseAGL, nearH, h1, h2, hW, hL, hR
@@ -3047,14 +3078,14 @@ void main() {
         g._navPitch = suggPitch;
         g._navBoost = suggBoost;
         g._navSev   = sev;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.SPHERE id, radius, widthSegs, heightSegs — create a sphere mesh
     cmdGL_SPHERE(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 4);
         const radius   = p[0] || 1;
         const wSegs    = Math.round(p[1]) || 16;
@@ -3086,7 +3117,7 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.BOX w, h, d — create a box mesh with given width, height, depth
@@ -3094,7 +3125,7 @@ void main() {
     cmdGL_BOX(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 3);
         const w = p[0] || 1;
         const h = p[1] || w;
@@ -3125,7 +3156,7 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.CYLINDER radius, length, sides — create a cylinder mesh.
@@ -3134,7 +3165,7 @@ void main() {
     cmdGL_CYLINDER(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 3);
         const radius = p[0] || 0.2;
         const length = p[1] || 2;
@@ -3166,7 +3197,7 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.POLYHEDRON type$, radius — Kepler–Poinsot star polyhedron.
@@ -3183,18 +3214,18 @@ void main() {
     cmdGL_POLYHEDRON(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
 
         // Parse type$ (first arg, string) and radius (second arg, number).
         const raw = this.trim(String(param||''));
-        if (!raw) return CMD_OK;
+        if (!raw) return C.CMD_OK;
         const ci = raw.indexOf(',');
         let typeRaw = ci >= 0 ? this.trim(raw.substring(0, ci)) : raw;
         const restRaw = ci >= 0 ? this.trim(raw.substring(ci+1)) : '';
         if (typeRaw.startsWith('"') && typeRaw.endsWith('"')) typeRaw = typeRaw.slice(1,-1);
-        else typeRaw = String(this.lookup_(ASS_STRING, typeRaw.toUpperCase()) || typeRaw);
+        else typeRaw = String(this.lookup_(C.ASS_STRING, typeRaw.toUpperCase()) || typeRaw);
         const type = String(typeRaw).trim().toUpperCase();
-        const radius = restRaw ? Number(this.evalCalc(restRaw, ASS_NUMBER)) || 1 : 1;
+        const radius = restRaw ? Number(this.evalCalc(restRaw, C.ASS_NUMBER)) || 1 : 1;
 
         const phi = (1 + Math.sqrt(5)) / 2;
         const inv = 1 / phi;
@@ -3284,7 +3315,7 @@ void main() {
             break;
         default:
             this.appendLine('Unknown polyhedron type: ' + type + ' (use SSD, GSD, GI, or GD)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // ---- Build geometry: for each face, fan from spike tip to base edges ----
@@ -3352,7 +3383,7 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode, _isSphere: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.SHAPEBEGIN — start a new 2D cross-section (the profile that gets
@@ -3361,7 +3392,7 @@ void main() {
     cmdGL_SHAPEBEGIN() {
         const g = this._glState();
         g._shapePoints = [];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 // GL.SHAPEPT x, y — append one 2D corner to the current shape. X is
 // vertical (wall height direction), Y is lateral (track width direction).
@@ -3372,7 +3403,7 @@ void main() {
         if (!g._shapePoints) g._shapePoints = [];
         const p = this._glParseFloats(param, 2);
         g._shapePoints.push([p[0] || 0, p[1] || 0]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.PATHBEGIN — start a new 2D path (XZ-plane points). Clears any
@@ -3382,7 +3413,7 @@ void main() {
         const g = this._glState();
         g._pathPoints = [];
         g._pathClosed = true;   // default closed; GL.PATHOPEN to override
-        return CMD_OK;
+        return C.CMD_OK;
     }
 // GL.PATHPT x, z [, y] — append a SMOOTH (auto-tangent) anchor to the path.
 // Tangents at this point are derived Catmull-Rom-style from the neighbours
@@ -3396,7 +3427,7 @@ void main() {
         if (!g._pathPoints) g._pathPoints = [];
         const p = this._glParseFloats(param, 3);
         g._pathPoints.push([p[0]||0, p[1]||0, p[2]||0, 0,0,0, 0,0,0, 0]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 // GL.PATHBEZPT x, z, y, hin_x, hin_z, hin_y, hout_x, hout_z, hout_y —
 // append an anchor with EXPLICIT in/out Bezier handles. Handles are
@@ -3413,7 +3444,7 @@ void main() {
             p[6]||0, p[7]||0, p[8]||0,
             1
         ]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 // GL.PATHLINPT x, z [, y] — append a LINEAR anchor. Segments touching this
 // point are rendered as straight lines; smooth neighbours don't curve into
@@ -3424,7 +3455,7 @@ void main() {
         if (!g._pathPoints) g._pathPoints = [];
         const p = this._glParseFloats(param, 3);
         g._pathPoints.push([p[0]||0, p[1]||0, p[2]||0, 0,0,0, 0,0,0, 2]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // _buildPathCurve — turn the buffered path-point list into a THREE.Curve
@@ -3516,7 +3547,7 @@ void main() {
     cmdGL_PATHOPEN() {
         const g = this._glState();
         g._pathClosed = false;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 // GL.SPLINE pathStyle [, samplesPerControl]
 // — render the buffered path as a 3D polyline (THREE.Line). No extrusion,
@@ -3530,11 +3561,11 @@ void main() {
     cmdGL_SPLINE(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const pathPts = g._pathPoints || [];
         if (pathPts.length < 2) {
             this.appendLine('GL.SPLINE needs at least 2 path points', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const p = this._glParseFloats(param, 2);
         // p[0] = pathStyle (0=lines, 1=spline, 2=tight). `|| 1` would treat
@@ -3572,7 +3603,7 @@ void main() {
             _threeObjects:[line], _builtMode: 'line', _isLine: true };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.EXTRUDE shapeStyle, pathStyle [, segsPerControl [, hollowInset]]
@@ -3593,17 +3624,17 @@ void main() {
     cmdGL_EXTRUDE(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const _t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
         const shapePts = g._shapePoints || [];
         const pathPts  = g._pathPoints  || [];
         if (shapePts.length < 3) {
             this.appendLine('GL.EXTRUDE needs at least 3 shape points (GL.SHAPEPT)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         if (pathPts.length < 3) {
             this.appendLine('GL.EXTRUDE needs at least 3 path points (GL.PATHPT)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const p = this._glParseFloats(param, 4);
         const shapeStyle = Math.max(0, Math.min(2, Math.floor(p[0] || 0)));
@@ -3815,7 +3846,7 @@ void main() {
             M, N,
             tris: (geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3) | 0,
         });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // _glPolyCount / _glVertCount — sum of visible triangle / vertex counts
@@ -3935,11 +3966,11 @@ void main() {
     cmdGL_TRACK(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const points = g._pathPoints || [];
         if (points.length < 3) {
             this.appendLine('GL.TRACK needs at least 3 path points', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const p = this._glParseFloats(param, 5);
         const W       = (p[0] || 0) / 2;          // half-width of road
@@ -4030,7 +4061,7 @@ void main() {
             _threeObjects:[mesh3], _builtMode: g.mode };
         g.meshes[id] = fakeMesh;
         g.lastId = id;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.LOAD url$ — load a GLTF (.gltf) / GLB (.glb) model and add it to the scene.
@@ -4041,7 +4072,7 @@ void main() {
     cmdGL_LOAD(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         // Arguments:  url$ [, rotX, rotY, rotZ]
         // url$ is a "literal" or a string variable. The optional rotations are a
         // one-time startup orientation (degrees) baked into the model node, so a
@@ -4050,29 +4081,29 @@ void main() {
         let url, rest = '';
         if (raw.charAt(0) === '"') {
             const close = raw.indexOf('"', 1);
-            if (close < 0) return CMD_ESYNTAX;
+            if (close < 0) return C.CMD_ESYNTAX;
             url = raw.slice(1, close);
             rest = raw.slice(close + 1);
         } else {
             const ci = raw.indexOf(',');
             if (ci >= 0) { url = raw.slice(0, ci); rest = raw.slice(ci); }
             else url = raw;
-            url = String(this.lookup_(ASS_STRING, this.trim(url).toUpperCase()) || url);
+            url = String(this.lookup_(C.ASS_STRING, this.trim(url).toUpperCase()) || url);
         }
         url = this.trim(url);
-        if (!url) return CMD_ESYNTAX;
+        if (!url) return C.CMD_ESYNTAX;
         let corrX = 0, corrY = 0, corrZ = 0;
         rest = this.trim(rest);
         if (rest.charAt(0) === ',') rest = this.trim(rest.slice(1));
         if (rest) {
             const rp = rest.split(',');
-            if (rp[0] != null && this.trim(rp[0]) !== '') corrX = Number(this.evalCalc(this.trim(rp[0]), ASS_NUMBER)) || 0;
-            if (rp[1] != null && this.trim(rp[1]) !== '') corrY = Number(this.evalCalc(this.trim(rp[1]), ASS_NUMBER)) || 0;
-            if (rp[2] != null && this.trim(rp[2]) !== '') corrZ = Number(this.evalCalc(this.trim(rp[2]), ASS_NUMBER)) || 0;
+            if (rp[0] != null && this.trim(rp[0]) !== '') corrX = Number(this.evalCalc(this.trim(rp[0]), C.ASS_NUMBER)) || 0;
+            if (rp[1] != null && this.trim(rp[1]) !== '') corrY = Number(this.evalCalc(this.trim(rp[1]), C.ASS_NUMBER)) || 0;
+            if (rp[2] != null && this.trim(rp[2]) !== '') corrZ = Number(this.evalCalc(this.trim(rp[2]), C.ASS_NUMBER)) || 0;
         }
         if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
             this.appendLine('GL.LOAD: GLTFLoader not available', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const host = this._host;
         host._glLoadPending = true;
@@ -4131,7 +4162,7 @@ void main() {
                 resume();
             }
         );
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.CHROME id [, roughness] — apply a real-time reflective chrome/mirror
@@ -4140,12 +4171,12 @@ void main() {
     cmdGL_CHROME(param) {
         const g = this._glState();
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
         const p = this._glParseFloats(param, 2);
         const id        = Math.round(p[0]);
         const roughness = p[1] !== undefined && p[1] > 0 ? p[1] : 0.05;
         const m = g.meshes[id];
-        if (!m || !m._threeObjects || !m._threeObjects[0]) return CMD_OK;
+        if (!m || !m._threeObjects || !m._threeObjects[0]) return C.CMD_OK;
 
         const mesh3 = m._threeObjects[0];
 
@@ -4183,7 +4214,7 @@ void main() {
         if (!g.three._chromeMeshes) g.three._chromeMeshes = [];
         g.three._chromeMeshes.push(m);
 
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.INSTANCE srcId, x, y, z, dirX, dirY, dirZ [, tiltXdeg, tiltZdeg]
@@ -4209,9 +4240,9 @@ void main() {
         const g = this._glState();
         const p = this._glParseFloats(param, 9);
         const m = g.meshes[Math.round(p[0])];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const t = g.three || this._glSetupThree();
-        if (!t) return CMD_OK;
+        if (!t) return C.CMD_OK;
 
         // Shared scratch, allocated once. The orientation basis (local +X ->
         // dir, +Y -> world up, +Z -> horizontal perpendicular) is built into
@@ -4240,11 +4271,11 @@ void main() {
         if (m._isLoaded) {
             if (!m._instLeaves) {
                 const root = m._threeObjects && m._threeObjects[0];
-                if (!root) return CMD_OK;
+                if (!root) return C.CMD_OK;
                 root.updateMatrixWorld(true);
                 const leaves = [];
                 root.traverse((c) => { if (c.isMesh && c.geometry) leaves.push(c); });
-                if (leaves.length === 0) return CMD_OK;
+                if (leaves.length === 0) return C.CMD_OK;
                 m._instLeaves = [];
                 for (const leaf of leaves) {
                     const li = new THREE.InstancedMesh(leaf.geometry, leaf.material, 2048);
@@ -4274,14 +4305,14 @@ void main() {
                 lr.inst.instanceMatrix.needsUpdate = true;
             }
             m._instCount = im + 1;
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // --- single-mesh path: ribbons / primitives (one shared InstancedMesh) ---
         if (!m._instanced) {
             if (!m._threeObjects || m._builtMode !== g.mode) this._glSyncMesh(m, g);
             const src = m._threeObjects && m._threeObjects[0];
-            if (!src || !src.geometry || !src.material) return CMD_OK;
+            if (!src || !src.geometry || !src.material) return C.CMD_OK;
             const inst0 = new THREE.InstancedMesh(src.geometry, src.material, 2048);
             inst0.count = 0;
             inst0.frustumCulled = false;
@@ -4308,7 +4339,7 @@ void main() {
         inst.setMatrixAt(i, t._instMat);
         inst.count = i + 1;
         inst.instanceMatrix.needsUpdate = true;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // GL.INSTHIDE srcId, index — collapse one instance of an instanced mesh to
@@ -4318,9 +4349,9 @@ void main() {
         const g = this._glState();
         const p = this._glParseFloats(param, 2);
         const m = g.meshes[Math.round(p[0])];
-        if (!m) return CMD_OK;
+        if (!m) return C.CMD_OK;
         const idx = Math.round(p[1]);
-        if (idx < 0) return CMD_OK;
+        if (idx < 0) return C.CMD_OK;
         const zero = new THREE.Matrix4().makeScale(0, 0, 0);
         if (m._instLeaves) {
             for (const lr of m._instLeaves) {
@@ -4333,7 +4364,7 @@ void main() {
             m._instanced.setMatrixAt(idx, zero);
             m._instanced.instanceMatrix.needsUpdate = true;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // Helper: split a param string on commas at paren-depth 0 (string-quote
@@ -4377,7 +4408,7 @@ void main() {
             }
             if (!inQ && depth === 0 && (c === ',' || i === raw.length)) {
                 const token = this.trim(raw.substring(start, i));
-                result.push(token ? Number(this.evalCalc(token, ASS_NUMBER)) : 0);
+                result.push(token ? Number(this.evalCalc(token, C.ASS_NUMBER)) : 0);
                 start = i + 1;
                 if (result.length >= n) break;
             }

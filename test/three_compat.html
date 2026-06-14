@@ -33,7 +33,7 @@
   <header>
     <h1>OSaware — three.js compat suite</h1>
     <div class="meta">
-      Engine target: <span id="meta-rev">…</span> · Loaded from <span id="meta-src">core/</span>
+      Engine target: <span id="meta-rev">…</span> · Loaded from <span id="meta-src">core/vendor/three/ (ESM)</span>
       <button onclick="runAll()">Run all</button>
     </div>
     <div id="summary" class="summary running">running…</div>
@@ -41,20 +41,51 @@
   <canvas id="test-canvas" width="320" height="180"></canvas>
   <main id="results"></main>
 
-  <!-- Same script load order as index.html -->
-  <script src="../core/three.min.js"></script>
-  <script src="../core/loaders/GLTFLoader.js"></script>
-  <script src="../core/loaders/RectAreaLightUniformsLib.js"></script>
-  <script src="../core/loaders/Sky.js"></script>
-  <script src="../core/loaders/CopyShader.js"></script>
-  <script src="../core/loaders/LuminosityHighPassShader.js"></script>
-  <script src="../core/loaders/EffectComposer.js"></script>
-  <script src="../core/loaders/RenderPass.js"></script>
-  <script src="../core/loaders/ShaderPass.js"></script>
-  <script src="../core/loaders/UnrealBloomPass.js"></script>
-  <script src="../core/loaders/FXAAShader.js"></script>
+  <!-- ESM importmap — points 'three' + 'three/addons/' at the vendored r151 build -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "../core/vendor/three/build/three.module.js",
+      "three/addons/": "../core/vendor/three/addons/"
+    }
+  }
+  </script>
 
-  <script>
+  <script type="module">
+  // Test-harness-local shim: import each addon and mirror it onto a writable
+  // THREE namespace so the existing test body (which uses THREE.X access)
+  // keeps working unchanged.  The engine code does NOT do this — it uses
+  // explicit imports. This shim is only for the test page.
+  //
+  // Note: `import * as ns from 'three'` returns a module-namespace exotic
+  // object that is sealed (non-extensible) per the ES module spec.  We
+  // shallow-clone it into a plain object so we can attach addon symbols.
+  // Class references / constants copy by reference, so everything still
+  // works at the call site.
+  import * as THREE_NS from 'three';
+  import { GLTFLoader }               from 'three/addons/loaders/GLTFLoader.js';
+  import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+  import { Sky }                      from 'three/addons/objects/Sky.js';
+  import { CopyShader }               from 'three/addons/shaders/CopyShader.js';
+  import { LuminosityHighPassShader } from 'three/addons/shaders/LuminosityHighPassShader.js';
+  import { FXAAShader }               from 'three/addons/shaders/FXAAShader.js';
+  import { EffectComposer }           from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass }               from 'three/addons/postprocessing/RenderPass.js';
+  import { ShaderPass }               from 'three/addons/postprocessing/ShaderPass.js';
+  import { UnrealBloomPass }          from 'three/addons/postprocessing/UnrealBloomPass.js';
+  const THREE = { ...THREE_NS };
+  THREE.GLTFLoader               = GLTFLoader;
+  THREE.RectAreaLightUniformsLib = RectAreaLightUniformsLib;
+  THREE.Sky                      = Sky;
+  THREE.CopyShader               = CopyShader;
+  THREE.LuminosityHighPassShader = LuminosityHighPassShader;
+  THREE.FXAAShader               = FXAAShader;
+  THREE.EffectComposer           = EffectComposer;
+  THREE.RenderPass               = RenderPass;
+  THREE.ShaderPass               = ShaderPass;
+  THREE.UnrealBloomPass          = UnrealBloomPass;
+  window.THREE = THREE;
+
   // ────────────────────────────────────────────────────────────────
   //  Test harness — exercises every THREE.* symbol + addon used by
   //  core/drivers/gl3d.js and core/drivers/gfx.js. Run against r128
@@ -575,6 +606,11 @@
   function escapeHTML(s) {
     return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
   }
+
+  // Top-level declarations in a module are scoped to the module; expose
+  // runAll on window so the header "Run all" button (inline HTML onclick)
+  // can call it from global scope.
+  window.runAll = runAll;
 
   // Auto-run on load
   window.addEventListener('load', () => setTimeout(runAll, 50));

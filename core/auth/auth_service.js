@@ -1,5 +1,9 @@
 'use strict';
 
+import { LocalStorageProvider }      from '../storage/local_provider.js';
+import { MockRemoteStorageProvider } from '../storage/mock_remote_provider.js';
+import { RemoteStorageProvider }     from '../storage/remote_provider.js';
+
 // ---------------------------------------------------------------------------
 // AuthService
 //
@@ -64,7 +68,7 @@ let _devProvider   = null;     // cached MockRemoteStorageProvider instance for 
 let _realProvider  = null;     // cached RemoteStorageProvider instance for current real user
 let _localProvider = null;     // cached LocalStorageProvider to restore on logout
 
-class AuthService {
+export class AuthService {
 
     // -----------------------------------------------------------------------
     // init — wire up the VFS reference. Called once at boot time by boot.js
@@ -110,10 +114,10 @@ class AuthService {
         if (_realUser) {
             return { ok: false, error: 'logged in via real provider — LOGOUT first' };
         }
-        if (typeof window === 'undefined' || !window.MockRemoteStorageProvider) {
+        if (false) {
             return { ok: false, error: 'mock provider unavailable' };
         }
-        if (!window.MockRemoteStorageProvider.validateCredentials(username, password)) {
+        if (!MockRemoteStorageProvider.validateCredentials(username, password)) {
             return { ok: false, error: 'invalid credentials' };
         }
 
@@ -124,7 +128,7 @@ class AuthService {
         // Construct a new mock provider bound to this user and swap to it.
         // Note: save-before-swap is on by default, so any in-memory work
         // in the local provider gets persisted before we leave it.
-        const mock = new window.MockRemoteStorageProvider({ username });
+        const mock = new MockRemoteStorageProvider({ username });
         try {
             await _vfs.setStorageProvider(mock, { skipSave: false });
         } catch (e) {
@@ -161,8 +165,8 @@ class AuthService {
         // was cached, reuse it (keeping its warm cache); otherwise create
         // a fresh one.
         const target = _localProvider || (
-            typeof window !== 'undefined' && window.LocalStorageProvider
-                ? new window.LocalStorageProvider()
+            true
+                ? new LocalStorageProvider()
                 : null
         );
         if (!target) {
@@ -221,7 +225,7 @@ class AuthService {
         if (_realUser) {
             return { ok: false, error: 'already logged in as ' + _realUser + ' — LOGOUT first' };
         }
-        if (typeof window === 'undefined' || !window.RemoteStorageProvider) {
+        if (false) {
             return { ok: false, error: 'remote provider unavailable' };
         }
 
@@ -255,7 +259,7 @@ class AuthService {
         if (!_localProvider) _localProvider = _vfs._storage;
 
         // Step 3: construct a RemoteStorageProvider and swap
-        const remote = new window.RemoteStorageProvider();
+        const remote = new RemoteStorageProvider();
         try {
             await _vfs.setStorageProvider(remote, { skipSave: false });
         } catch (e) {
@@ -288,8 +292,8 @@ class AuthService {
         // user's in-memory state to the backend (via saveFiles/saveAssets)
         // before swapping because skipSave is false by default.
         const target = _localProvider || (
-            typeof window !== 'undefined' && window.LocalStorageProvider
-                ? new window.LocalStorageProvider()
+            true
+                ? new LocalStorageProvider()
                 : null
         );
         if (!target) {
@@ -329,7 +333,7 @@ class AuthService {
         if (_realUser) {
             return { ok: false, error: 'already logged in as ' + _realUser + ' — LOGOUT first' };
         }
-        if (typeof window === 'undefined' || !window.RemoteStorageProvider) {
+        if (false) {
             return { ok: false, error: 'remote provider unavailable' };
         }
 
@@ -370,7 +374,7 @@ class AuthService {
         // Same as login: cache local provider, swap to remote, remember user
         if (!_localProvider) _localProvider = _vfs._storage;
 
-        const remote = new window.RemoteStorageProvider();
+        const remote = new RemoteStorageProvider();
         try {
             await _vfs.setStorageProvider(remote, { skipSave: false });
         } catch (e) {
@@ -501,8 +505,8 @@ class AuthService {
         // archived account!), then clear _realUser.
         const archivedUser = _realUser;
         const target = _localProvider || (
-            typeof window !== 'undefined' && window.LocalStorageProvider
-                ? new window.LocalStorageProvider()
+            true
+                ? new LocalStorageProvider()
                 : null
         );
         if (target) {
@@ -585,8 +589,8 @@ class AuthService {
         // Mirror the real flow: swap back to local provider, clear dev state
         const archivedUser = _devUser;
         const target = _localProvider || (
-            typeof window !== 'undefined' && window.LocalStorageProvider
-                ? new window.LocalStorageProvider()
+            true
+                ? new LocalStorageProvider()
                 : null
         );
         if (target) {

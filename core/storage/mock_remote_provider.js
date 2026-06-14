@@ -106,7 +106,7 @@ function _ensureUserSlots(username) {
     return _MOCK_USER_STORE.get(username);
 }
 
-class MockRemoteStorageProvider {
+export class MockRemoteStorageProvider {
 
     // Construct a provider bound to a specific user.
     // opts.latency: ms to delay each async call (default 50, or

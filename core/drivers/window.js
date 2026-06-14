@@ -24,7 +24,7 @@
 //   Direct postMessage on the window reference is used for parent → child.
 // ---------------------------------------------------------------------------
 
-class WindowDriver {
+export class WindowDriver {
 
     constructor(host) {
         this._host       = host;

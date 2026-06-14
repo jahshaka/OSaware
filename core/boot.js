@@ -1,5 +1,10 @@
 'use strict';
 
+import { Interpreter } from './kernel.js';
+import { AuthService } from './auth/auth_service.js';
+import './compiler.js';        // mixes Compiler methods into Interpreter.prototype
+import './ui.js';              // attaches page-level UI listeners as a side effect
+
     // -----------------------------------------------------------------------
     // Calculate terminal dimensions from available viewport space.
     // On mobile the terminal fills the whole screen; on desktop it sits inside
@@ -187,8 +192,8 @@
       }
 
       // Wire AuthService to the VFS so DEVLOGIN/LOGIN can swap storage.
-      if (window.AuthService) {
-        window.AuthService.init(oEmulator.fs);
+      if (true) {
+        AuthService.init(oEmulator.fs);
       }
 
       // VFS init is async (loads user files/assets via the storage provider,

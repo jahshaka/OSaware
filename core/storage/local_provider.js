@@ -74,7 +74,7 @@ const KEY_ASSETS_PENDING   = 'osaware_user_assets_pending';
 const LEGACY_KEY_FILES  = 'osaware_user_files';
 const LEGACY_KEY_ASSETS = 'osaware_user_assets';
 
-class LocalStorageProvider {
+export class LocalStorageProvider {
 
     constructor() {
         this.name = 'local';

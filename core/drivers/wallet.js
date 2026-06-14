@@ -1,5 +1,9 @@
 'use strict';
 
+import * as C from '../constants.js';
+import { WalletTokens } from './wallet_tokens.js';
+
+
 // ---------------------------------------------------------------------------
 // WalletDriver  (drivers/wallet.js)
 //
@@ -103,7 +107,7 @@ const WALLET_TOKEN_TTL_MS = 4000;
 // briefly tabbed-out doesn't drop the user's session.
 const WALLET_IDLE_DISCONNECT_MS = 30 * 60 * 1000;   // 30 minutes
 
-class WalletDriver {
+export class WalletDriver {
 
     constructor(host) {
         this._host = host;
@@ -195,7 +199,7 @@ class WalletDriver {
     // ── WALLETCONNECT ─────────────────────────────────────────────────────
     cmdWALLETCONNECT() {
         const host = this._host;
-        if (host._walletPending) return CMD_OK;
+        if (host._walletPending) return C.CMD_OK;
         host._walletPending = true;
         host.appendLine('Opening your wallet extension...', 1);
 
@@ -286,7 +290,7 @@ class WalletDriver {
                 });
         });
 
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ── WALLETDISCONNECT ──────────────────────────────────────────────────
@@ -298,7 +302,7 @@ class WalletDriver {
         const host = this._host;
         if (!host._walletAddress) {
             host.appendLine('No wallet connected.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         host._walletPending = true;
         const provider = host._walletProvider ? host._walletProvider.provider : null;
@@ -321,14 +325,14 @@ class WalletDriver {
             host._walletPending = false;
             if (host.running) host.tick(1);
         };
-        if (!provider) { finish(false); return CMD_OK; }
+        if (!provider) { finish(false); return C.CMD_OK; }
         // Best-effort revoke. Older wallets / wallets without EIP-2255 support
         // throw method-not-found — fall through to local-clear-only.
         this._walletProviderCall(provider, 'wallet_revokePermissions',
             [{ eth_accounts: {} }])
             .then(() => finish(true))
             .catch(() => finish(false));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ── WALLETSWITCH chainIdOrName ────────────────────────────────────────
@@ -342,12 +346,12 @@ class WalletDriver {
         const host = this._host;
         if (!host._walletAddress || !host._walletProvider) {
             host.appendLine('No wallet connected. Connect first.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const raw = String(param == null ? '' : param).trim();
         if (!raw) {
             host.appendLine('Usage: WALLETSWITCH <chainId | "Name">', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         // Resolve target chain ID from either a number or a name.
         let targetId = 0;
@@ -365,13 +369,13 @@ class WalletDriver {
                 .map(([cid, n]) => n.name + ' (' + cid + ')').join(', ');
             host.appendLine('Unknown or unsupported chain: ' + raw, 1);
             host.appendLine('Supported: ' + supported, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         if (targetId === host._walletChainId) {
             host.appendLine('Already on ' + WALLET_NETWORKS[targetId].name + '.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
-        if (host._walletPending) return CMD_OK;
+        if (host._walletPending) return C.CMD_OK;
         host._walletPending = true;
         const provider = host._walletProvider.provider;
         const memAtStart = host._mem;
@@ -418,7 +422,7 @@ class WalletDriver {
                 }
                 resume();
             });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ── WALLETREFRESH ─────────────────────────────────────────────────────
@@ -429,14 +433,14 @@ class WalletDriver {
         const host = this._host;
         if (!host._walletAddress || !host._walletProvider) {
             host.appendLine('No wallet connected.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
-        if (host._walletPending) return CMD_OK;
+        if (host._walletPending) return C.CMD_OK;
         host._walletPending = true;
         const resume = () => { host._walletPending = false; if (host.running) host.tick(1); };
         this._walletPrefetch(host._walletProvider.provider)
             .then(() => resume(), () => resume());
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ── Prefetch — populate balance caches in parallel ────────────────────
@@ -672,7 +676,7 @@ class WalletDriver {
 
     cmdWALLETSHOWZERO(param) {
         this._host._walletShowZero = Number(param) ? 1 : 0;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Comma-joined "SYM=value,SYM=value,..." across BOTH the curated

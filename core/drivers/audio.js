@@ -1,4 +1,6 @@
 'use strict';
+import * as C from '../constants.js';
+
 
 // ---------------------------------------------------------------------------
 // AudioDriver  (drivers/audio.js)
@@ -7,7 +9,7 @@
 // Wraps all audio synthesis: SOUND, WAVE, BEEP and the Web Audio context.
 // ---------------------------------------------------------------------------
 
-class AudioDriver {
+export class AudioDriver {
 
     constructor(host) {
         this._host       = host;
@@ -32,18 +34,18 @@ class AudioDriver {
 // volume 0-255, voice 0-3 (0,3=left  1,2=right)
 // -----------------------------------------------------------------------
     cmdSOUND(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         // Parse raw param string into array, handling WAIT/RESUME first
         const rawTrim = this.trim(String(param)).toUpperCase();
 
         // SOUND WAIT / SOUND RESUME
         const p0 = rawTrim.split(',')[0].trim();
-        if (p0 === 'WAIT')   { this._soundWait = true;  return CMD_OK; }
-        if (p0 === 'RESUME') { this._soundWait = false; this._flushSoundQueue(); return CMD_OK; }
+        if (p0 === 'WAIT')   { this._soundWait = true;  return C.CMD_OK; }
+        if (p0 === 'RESUME') { this._soundWait = false; this._flushSoundQueue(); return C.CMD_OK; }
 
         // Parse comma-separated numeric params
         const parts = this.findParameters(String(param), 0, ',');
-        if (!parts || parts.length < 2) return CMD_ESYNTAX;
+        if (!parts || parts.length < 2) return C.CMD_ESYNTAX;
 
         const freq   = Math.max(20, Math.min(15000, Number(parts[0])));
         const dur    = Math.max(0, Number(parts[1])) / 60;  // jiffies → seconds
@@ -58,7 +60,7 @@ class AudioDriver {
         } else {
             this._playSoundEntry(entry);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _getAudioCtx() {
@@ -129,12 +131,12 @@ class AudioDriver {
 // WAVE voice, arrayName → use 256-element array as waveform (-128 to 127)
 // -----------------------------------------------------------------------
     cmdWAVE(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const ctx = this._getAudioCtx();
-        if (!ctx) return CMD_OK;
+        if (!ctx) return C.CMD_OK;
 
         const comma = String(param).indexOf(',');
-        if (comma < 0) return CMD_ESYNTAX;
+        if (comma < 0) return C.CMD_ESYNTAX;
 
         const voiceStr = this.trim(String(param).substring(0, comma));
         const waveStr  = this.trim(String(param).substring(comma + 1));
@@ -145,7 +147,7 @@ class AudioDriver {
         // WAVE v, SIN → clear custom wave (back to sine)
         if (waveStr.toUpperCase() === 'SIN') {
             delete this._waveTables[voice];
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // WAVE v, ArrayName → build PeriodicWave from array
@@ -154,7 +156,7 @@ class AudioDriver {
         const arr = this.variables_arr_numbers.get(arrName);
         if (!arr || arr.length < 256) {
             this.appendLine('WAVE: array must have at least 256 elements', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Convert the waveform samples to a PeriodicWave via FFT
@@ -185,7 +187,7 @@ class AudioDriver {
         } catch(e) {
             this.appendLine('WAVE: ' + e.message, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdBEEP() {
@@ -207,7 +209,7 @@ class AudioDriver {
                 setTimeout(() => { this.o.style.filter = prev; }, 80);
             }
         } catch(e) { }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 

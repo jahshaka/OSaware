@@ -45,7 +45,7 @@ const MAX_TOKENS_PER_CHAIN = 800;
 // ERC-20 balanceOf(address) selector.
 const ERC20_BALANCEOF_SEL = '0x70a08231';
 
-class WalletTokens {
+export class WalletTokens {
 
     constructor() {
         // In-memory cache: url -> { tokens, ts }. Avoids re-parsing the

@@ -1,13 +1,14 @@
-( function () {
+// Vendored from three.js master examples/jsm/objects/Sky.js, with two
+// OSaware-specific patches preserved across version migrations:
+//   1. Cloud uniforms (cloudCoverage / cloudScale / cloudSpeed) + the
+//      corresponding fragment-shader cloud-noise pass — adds a procedural
+//      cloud layer to the sky dome.
+//   2. Self-contained ACES tone-map + exposure 0.5 + pow(1/2.2) gamma at
+//      the end of the fragment shader, so the sky renders correctly without
+//      depending on the renderer's tone-mapping / colour-management settings.
+// Preetham daylight model + procedural clouds -- Simon Wallner, Martin Upitis, zz85.
 
-	// Vendored from three.js master examples/jsm/objects/Sky.js, adapted for the
-	// vendored r128 renderer: ES-module import/export -> THREE globals in an IIFE;
-	// the modern sRGB shader-chunk include is renamed to the r128 chunk name;
-	// re-added the r128-era gamma curve (pow by vSunfade) so it reads right
-	// without the modern tone-mapping / colour-management pipeline.
-	// Preetham daylight model + procedural clouds -- Simon Wallner, Martin Upitis, zz85.
-
-	const { BackSide, BoxGeometry, Mesh, ShaderMaterial, UniformsUtils, Vector3 } = THREE;
+import { BackSide, BoxGeometry, Mesh, ShaderMaterial, UniformsUtils, Vector3 } from 'three';
 
 /**
  * Represents a skydome for scene backgrounds. Based on [A Practical Analytic Model for Daylight](https://www.researchgate.net/publication/220720443_A_Practical_Analytic_Model_for_Daylight)
@@ -323,6 +324,4 @@ Sky.SkyShader = {
 
 };
 
-THREE.Sky = Sky;
-
-} )();
+export { Sky };

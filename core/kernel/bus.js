@@ -1,5 +1,7 @@
 'use strict';
 
+import * as C from '../constants.js';
+
 // ---------------------------------------------------------------------------
 // KernelBus  (core/kernel/bus.js)
 //
@@ -32,7 +34,7 @@
 //   'vfs.*'          virtual filesystem
 // ---------------------------------------------------------------------------
 
-class KernelBus {
+export class KernelBus {
 
     constructor() {
         // syscall → handler function
@@ -58,17 +60,17 @@ class KernelBus {
 
     // ── Runtime interface ──────────────────────────────────────────────────
 
-    // Fire-and-forget syscall. Returns CMD_OK (-1) for use as a return value
+    // Fire-and-forget syscall. Returns C.CMD_OK (-1) for use as a return value
     // in cmd* methods.
     post(msg, pid = 0) {
         if (this._debug) console.log('[bus.post]', msg.syscall, msg);
         const handler = this._handlers.get(msg.syscall);
         if (!handler) {
             if (this._debug) console.warn(`KernelBus: no handler for '${msg.syscall}'`);
-            return -1; // CMD_OK
+            return -1; // C.CMD_OK
         }
         handler(msg, pid);
-        return -1; // CMD_OK
+        return -1; // C.CMD_OK
     }
 
     // Synchronous syscall — handler must return a value.

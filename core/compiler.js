@@ -1,5 +1,10 @@
 'use strict';
 
+import * as C from './constants.js';
+import { AuthService }                          from './auth/auth_service.js';
+import { Interpreter }                          from './kernel.js';
+
+
 // Module-level cache for volatile built-in set (shared across all instances)
 let _VOLATILE_SET = null;
 let _BUILTIN_NUM_NAMES_SET = null;
@@ -34,7 +39,7 @@ const _NUM_FUNCS = new Set(['LEN', 'INT', 'RND', 'ABS', 'SQR', 'VAL',
 //   Condition check   : checkCondition
 // ---------------------------------------------------------------------------
 
-class Compiler {
+export class Compiler {
 
     zapVariables() {
         // Use Maps for O(1) variable lookup instead of O(n) array scan.
@@ -96,11 +101,11 @@ class Compiler {
             const single = parts[0];
             const n = Number(single);
             if (!Number.isNaN(n) && single.trim() !== '') return n;
-            return this.evalCalc(single, ASS_NUMBER, 0) || 0;
+            return this.evalCalc(single, C.ASS_NUMBER, 0) || 0;
         }
         const indices = parts.map(p => {
             const n = Number(p.trim());
-            return (!Number.isNaN(n) && p.trim() !== '') ? n : (this.evalCalc(p.trim(), ASS_NUMBER, 0) || 0);
+            return (!Number.isNaN(n) && p.trim() !== '') ? n : (this.evalCalc(p.trim(), C.ASS_NUMBER, 0) || 0);
         });
         // Get column count from _dimInfo if available, else use a safe large number.
         // Variables are case-sensitive — use baseName as-is (matches DIM storage in shell.js).
@@ -142,12 +147,12 @@ class Compiler {
 
         let result;
         // String variable or string-returning function
-        if (variableName.endsWith('$') || isStrFunc) result = ASS_STRING;
+        if (variableName.endsWith('$') || isStrFunc) result = C.ASS_STRING;
         // Array of strings: name$(index)
-        else if (dollarPos > 0 && parenOpen > dollarPos) result = ASS_ARRAY_STRING;
+        else if (dollarPos > 0 && parenOpen > dollarPos) result = C.ASS_ARRAY_STRING;
         // Array of numbers: name(index)   (but not a known numeric function)
-        else if (parenClose > parenOpen && !isNumFunc) result = ASS_ARRAY_NUMBER;
-        else result = ASS_NUMBER;
+        else if (parenClose > parenOpen && !isNumFunc) result = C.ASS_ARRAY_NUMBER;
+        else result = C.ASS_NUMBER;
 
         if (!cache) {
             cache = new Map();
@@ -291,9 +296,9 @@ class Compiler {
         }
         // Heuristic: if first identifier ends with $ -> string
         const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*\$)\b/);
-        if (m) return this.evalCalc(t, ASS_STRING, 0);
+        if (m) return this.evalCalc(t, C.ASS_STRING, 0);
         // Otherwise number
-        return this.evalCalc(t, ASS_NUMBER, 0);
+        return this.evalCalc(t, C.ASS_NUMBER, 0);
     }
 
     // _evalMemberExpr — handles  obj.field  /  obj.method(args)  expressions.
@@ -337,11 +342,11 @@ class Compiler {
                 // this when we have an _oopObjects map AND the value is a
                 // live handle key.
                 if (!this._oopObjects) return undefined;
-                const tryHandle = Number(this.evalCalc(leftRaw, ASS_NUMBER, level + 1)) || 0;
+                const tryHandle = Number(this.evalCalc(leftRaw, C.ASS_NUMBER, level + 1)) || 0;
                 if (!tryHandle || !this._oopObjects.has(tryHandle)) return undefined;
                 selfHandle = tryHandle;
             } else {
-                selfHandle = Number(this.evalCalc(leftRaw, ASS_NUMBER, level + 1)) || 0;
+                selfHandle = Number(this.evalCalc(leftRaw, C.ASS_NUMBER, level + 1)) || 0;
                 if (!selfHandle) return undefined;
             }
             const inst = this._objectGet(selfHandle);
@@ -365,16 +370,16 @@ class Compiler {
             const upper = memberName.toUpperCase();
             if (inst.fields.has(upper)) {
                 const v = inst.fields.get(upper);
-                // Field-name sigil ($) tells us the storage type. ASS_ANY
+                // Field-name sigil ($) tells us the storage type. C.ASS_ANY
                 // (called from PRINT etc.) must preserve the actual type so
                 // a hex-looking string like a wallet address isn't coerced
                 // back to a number via Number("0xabc...").
                 const isStrField = memberName.endsWith('$');
-                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING ||
-                    (assignType === ASS_ANY && isStrField)) {
+                if (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING ||
+                    (assignType === C.ASS_ANY && isStrField)) {
                     return String(v == null ? '' : v);
                 }
-                if (assignType === ASS_ANY) return v;
+                if (assignType === C.ASS_ANY) return v;
                 return Number(v) || 0;
             }
             return 0;
@@ -390,15 +395,15 @@ class Compiler {
         // infinite recursion when MYBASE.Init is called from each level.
         const ownerCls = methodEntry.ownerClass || dispatchCls;
         const result = this._dispatchMethod(selfHandle, ownerCls, methodEntry.method, args, isMybase);
-        // Method-name sigil ($) determines the return type. Under ASS_ANY
+        // Method-name sigil ($) determines the return type. Under C.ASS_ANY
         // (PRINT context), we MUST trust the sigil — otherwise a string
         // result like "0xabc..." gets Number()'d to scientific notation.
         const isStrReturn = methodEntry.method.name.endsWith('$');
-        if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING ||
-            (assignType === ASS_ANY && isStrReturn)) {
+        if (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING ||
+            (assignType === C.ASS_ANY && isStrReturn)) {
             return String(result == null ? '' : result);
         }
-        if (assignType === ASS_ANY) return result;
+        if (assignType === C.ASS_ANY) return result;
         return Number(result) || 0;
     }
 
@@ -498,7 +503,7 @@ class Compiler {
                 const r = k.interpret(_if);
                 if (r >= 0) { k.run_line = r; }
             }
-            if (newLn === -2 || newLn === CMD_END) break;
+            if (newLn === -2 || newLn === C.CMD_END) break;
             if (newLn === -3 /* EXIT SUB sentinel? */ ) break;
             if (newLn !== undefined && newLn !== null && newLn >= 0) {
                 // jump — find the new line index
@@ -541,7 +546,7 @@ class Compiler {
         // For arrays, extract base name and element index. Use _matchingClose
         // so nested calls like TANK(TARGETID(P), 1) resolve to the OUTER `)`.
         let element = 0;
-        if (varType === ASS_ARRAY_NUMBER || varType === ASS_ARRAY_STRING) {
+        if (varType === C.ASS_ARRAY_NUMBER || varType === C.ASS_ARRAY_STRING) {
             const parenOpen  = variableName.indexOf('(');
             const parenClose = parenOpen >= 0 ? this._matchingClose(variableName, parenOpen) : -1;
             if (parenClose > parenOpen) {
@@ -555,25 +560,25 @@ class Compiler {
         }
 
         switch (varType) {
-            case ASS_NUMBER:
+            case C.ASS_NUMBER:
                 this.variables_numbers.set(variableName, variableValue);
                 break;
-            case ASS_STRING:
+            case C.ASS_STRING:
                 this.variables_strings.set(variableName, variableValue);
                 break;
-            case ASS_ARRAY_NUMBER: {
+            case C.ASS_ARRAY_NUMBER: {
                 let arr = this.variables_arr_numbers.get(variableName);
                 if (!arr) { arr = []; this.variables_arr_numbers.set(variableName, arr); }
                 arr[element] = variableValue;
                 break;
             }
-            case ASS_ARRAY_STRING: {
+            case C.ASS_ARRAY_STRING: {
                 let arr = this.variables_arr_strings.get(variableName);
                 if (!arr) { arr = []; this.variables_arr_strings.set(variableName, arr); }
                 arr[element] = variableValue;
                 break;
             }
-            case ASS_FUNCTION:
+            case C.ASS_FUNCTION:
                 // Functions still use the legacy array (rarely written)
                 for (const entry of this.variables_func) {
                     if (entry[0] === variableName) { entry[1] = variableValue; return; }
@@ -607,7 +612,7 @@ class Compiler {
         // Skip String/trim/Number checks when we know it's a user variable
         // (not a built-in name like TIMER, INKEY, WIDTH, etc.)
         if (typeof variableName === 'string' && variableName.length > 0 &&
-            type === ASS_NUMBER && element === undefined &&
+            type === C.ASS_NUMBER && element === undefined &&
             !Compiler._BUILTIN_NUM_NAMES.has(variableName)) {
             // Only take the shortcut for simple identifier chars (no trim needed).
             let allValid = true;
@@ -638,7 +643,7 @@ class Compiler {
         if (!Number.isNaN(asNum) && variableName !== '') return asNum;
 
         switch (type) {
-            case ASS_NUMBER: {
+            case C.ASS_NUMBER: {
                 // Built-in numeric variables — keyword match, case-insensitive.
                 switch (nameU) {
                     case 'UPTIME':    return (Date.now() - this.dStartTime) / 1000;
@@ -725,7 +730,7 @@ class Compiler {
                     };
                     for (const [prefix, prop] of Object.entries(objFuncs)) {
                         if (upper.startsWith(prefix)) {
-                            const id = Math.floor(Number(this.evalCalc(rawArg, ASS_NUMBER)));
+                            const id = Math.floor(Number(this.evalCalc(rawArg, C.ASS_NUMBER)));
                             const obj = this._objects && this._objects[id];
                             return obj ? Number(obj[prop]) : 0;
                         }
@@ -741,7 +746,7 @@ class Compiler {
                             const end = symRaw.lastIndexOf('"');
                             if (end > 0) sym = symRaw.slice(1, end);
                         } else {
-                            sym = String(this.evalCalc(symRaw, ASS_STRING) || '');
+                            sym = String(this.evalCalc(symRaw, C.ASS_STRING) || '');
                         }
                         return this._walletDrv.walletToken(sym);
                     }
@@ -749,13 +754,13 @@ class Compiler {
                     if (upper.startsWith('WALLET.TOKENAT(')) {
                         if (!this._walletDrv) return 0;
                         const arg = this.extractValue(variableName, 1);
-                        const idx = Math.floor(Number(this.evalCalc(arg, ASS_NUMBER)));
+                        const idx = Math.floor(Number(this.evalCalc(arg, C.ASS_NUMBER)));
                         return this._walletDrv.walletTokenValueAt(idx);
                     }
 
                     // COLLISION(id) — poll collision queue for a specific object id.
                     if (upper.startsWith('COLLISION(')) {
-                        const id = Math.floor(Number(this.evalCalc(rawArg, ASS_NUMBER)));
+                        const id = Math.floor(Number(this.evalCalc(rawArg, C.ASS_NUMBER)));
                         if (!this._collisionQueue) return 0;
                         if (id === 0) {
                             // COLLISION(0) — return id of any object that collided
@@ -799,11 +804,11 @@ class Compiler {
                     if (upper.startsWith('SGN('))  return Math.sign(Number(numArg));
                     if (upper.startsWith('ASC(')) {
                         // ASC takes a string arg — use raw string not numArg
-                        const s = rawArg.startsWith('"') ? rawArg.slice(1, rawArg.lastIndexOf('"')) : String(this.lookup_(ASS_STRING, rawArg));
+                        const s = rawArg.startsWith('"') ? rawArg.slice(1, rawArg.lastIndexOf('"')) : String(this.lookup_(C.ASS_STRING, rawArg));
                         return s.length > 0 ? s.charCodeAt(0) : 0;
                     }
                     if (upper.startsWith('VAL(')) {
-                        const s = (rawArg.startsWith('"') ? rawArg.slice(1, rawArg.lastIndexOf('"')) : String(this.lookup_(ASS_STRING, rawArg))).trimStart();
+                        const s = (rawArg.startsWith('"') ? rawArg.slice(1, rawArg.lastIndexOf('"')) : String(this.lookup_(C.ASS_STRING, rawArg))).trimStart();
                         const m = s.match(/^-?[\d.]+/);
                         return m ? Number(m[0]) : 0;
                     }
@@ -822,12 +827,12 @@ class Compiler {
                         const parts = raw.split(',');
                         let start = 0, hay, needle;
                         if (parts.length >= 3) {
-                            start  = Math.max(0, Number(this.evalCalc(parts[0].trim(), ASS_NUMBER, 0)) - 1);
-                            hay    = String(this.getValue(parts[1].trim(), 0, parts[1].trim().length, ASS_STRING));
-                            needle = String(this.getValue(parts[2].trim(), 0, parts[2].trim().length, ASS_STRING));
+                            start  = Math.max(0, Number(this.evalCalc(parts[0].trim(), C.ASS_NUMBER, 0)) - 1);
+                            hay    = String(this.getValue(parts[1].trim(), 0, parts[1].trim().length, C.ASS_STRING));
+                            needle = String(this.getValue(parts[2].trim(), 0, parts[2].trim().length, C.ASS_STRING));
                         } else {
-                            hay    = String(this.getValue(parts[0].trim(), 0, parts[0].trim().length, ASS_STRING));
-                            needle = String(this.getValue(parts[1].trim(), 0, parts[1].trim().length, ASS_STRING));
+                            hay    = String(this.getValue(parts[0].trim(), 0, parts[0].trim().length, C.ASS_STRING));
+                            needle = String(this.getValue(parts[1].trim(), 0, parts[1].trim().length, C.ASS_STRING));
                         }
                         const idx = hay.indexOf(needle, start);
                         return idx < 0 ? 0 : idx + 1;  // BASIC is 1-based
@@ -836,8 +841,8 @@ class Compiler {
                         // POINT(x, y) — return colour index of pixel
                         const raw   = this.extractValue(variableName, 1);
                         const parts = raw.split(',');
-                        const px    = Number(this.evalCalc(parts[0].trim(), ASS_NUMBER, 0));
-                        const py    = parts.length > 1 ? Number(this.evalCalc(parts[1].trim(), ASS_NUMBER, 0)) : 0;
+                        const px    = Number(this.evalCalc(parts[0].trim(), C.ASS_NUMBER, 0));
+                        const py    = parts.length > 1 ? Number(this.evalCalc(parts[1].trim(), C.ASS_NUMBER, 0)) : 0;
                         // Read from Three.js pixel buffer if active, else fall back to canvas
                         let d;
                         if (this._gfx) {
@@ -887,16 +892,16 @@ class Compiler {
                     if (upper.startsWith('UBOUND(')) {
                         const uname = rawArg.split(',')[0].trim();
                         if (!this._arrMax) return 0;
-                        return this._arrMax[ASS_ARRAY_NUMBER + ':' + uname] ||
-                               this._arrMax[ASS_ARRAY_STRING  + ':' + uname] || 0;
+                        return this._arrMax[C.ASS_ARRAY_NUMBER + ':' + uname] ||
+                               this._arrMax[C.ASS_ARRAY_STRING  + ':' + uname] || 0;
                     }
-                    if (upper.startsWith('SQR('))  return numArg >= 0 ? Math.sqrt(Number(numArg)) : Math.sqrt(this.lookup_(ASS_NUMBER, String(numArg)));
+                    if (upper.startsWith('SQR('))  return numArg >= 0 ? Math.sqrt(Number(numArg)) : Math.sqrt(this.lookup_(C.ASS_NUMBER, String(numArg)));
                     if (upper.startsWith('INT('))  return Math.floor(Number(numArg));  // BASIC INT() floors toward -infinity
                     if (upper.startsWith('LEN(')) {
                         // rawArg preserves original case and quotes; evaluate as string.
                         const lenStr = rawArg.startsWith('"')
                             ? rawArg.slice(1, rawArg.lastIndexOf('"'))
-                            : String(this.getValue(rawArg, 0, rawArg.length, ASS_STRING));
+                            : String(this.getValue(rawArg, 0, rawArg.length, C.ASS_STRING));
                         return lenStr.length;
                     }
                     if (upper.startsWith('RND(')) {
@@ -918,7 +923,7 @@ class Compiler {
                 break;
             }
 
-            case ASS_STRING: {
+            case C.ASS_STRING: {
                 // Built-in string variables — keyword match, case-insensitive.
                 if (nameU === 'TIME$') {
                     const d = new Date();
@@ -944,13 +949,13 @@ class Compiler {
                 if (nameU === 'WINDOW.MSG$') return this._winDrv ? this._winDrv.lastMsg : '';
                 if (nameU === 'WINDOW.ISCHILD$') return (this._winDrv && this._winDrv.isChild) ? '1' : '0';
                 if (nameU === 'WHOAMI$') {
-                    if (typeof window === 'undefined' || !window.AuthService) return 'local';
-                    const u = window.AuthService.currentUser();
+                    if (false) return 'local';
+                    const u = AuthService.currentUser();
                     return u ? u : 'local';
                 }
                 if (nameU === 'DEVWHOAMI$') {
-                    if (typeof window === 'undefined' || !window.AuthService) return '(no dev session)';
-                    const u = window.AuthService.devCurrentUser();
+                    if (false) return '(no dev session)';
+                    const u = AuthService.devCurrentUser();
                     return u ? u : '(no dev session)';
                 }
                 // Wallet (Stage 1) — see docs/OSaware Wallet.pdf.
@@ -967,7 +972,7 @@ class Compiler {
                     if (upper.startsWith('WALLET.TOKENSYMBOL$(')) {
                         if (!this._walletDrv) return '';
                         const arg = this.extractValue(variableName, 1);
-                        const idx = Math.floor(Number(this.evalCalc(arg, ASS_NUMBER)));
+                        const idx = Math.floor(Number(this.evalCalc(arg, C.ASS_NUMBER)));
                         return this._walletDrv.walletTokenSymbol(idx);
                     }
 
@@ -976,49 +981,49 @@ class Compiler {
                     return ({'BROWSER':navigator.userAgent,'PLATFORM':navigator.platform,'LANGUAGE':navigator.language,'URL':location.href}[key.toUpperCase()]||'');
                 }
                 if (upper.startsWith('SPC(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                     return ' '.repeat(Math.max(0, n));
                 }
                 if (upper.startsWith('MKI$(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0)) & 0xFFFF;
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0)) & 0xFFFF;
                     return String.fromCharCode(n & 0xFF, (n >> 8) & 0xFF);
                 }
                 if (upper.startsWith('MKL$(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0)) >>> 0;
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0)) >>> 0;
                     return String.fromCharCode(n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>24)&0xFF);
                 }
                 if (upper.startsWith('MKS$(') || upper.startsWith('MKD$(')) {
-                    return String(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                    return String(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                 }
                 if (upper.startsWith('UCASE$(')) {
                     const r = this.extractValue(variableName, 1);
-                    return String(this.getValue(r, 0, r.length, ASS_STRING)).toUpperCase();
+                    return String(this.getValue(r, 0, r.length, C.ASS_STRING)).toUpperCase();
                 }
                 if (upper.startsWith('LCASE$(')) {
                     const r = this.extractValue(variableName, 1);
-                    return String(this.getValue(r, 0, r.length, ASS_STRING)).toLowerCase();
+                    return String(this.getValue(r, 0, r.length, C.ASS_STRING)).toLowerCase();
                 }
                 if (upper.startsWith('SPACE$(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                     return ' '.repeat(Math.max(0, n));
                 }
                 if (upper.startsWith('STRING$(')) {
                     const raw   = this.extractValue(variableName, 1);
                     const parts = raw.split(',');
-                    const n     = Number(this.getValue(parts[0], 0, parts[0].length, ASS_NUMBER));
+                    const n     = Number(this.getValue(parts[0], 0, parts[0].length, C.ASS_NUMBER));
                     const chVal = parts.length > 1
                         ? (Number(parts[1]) > 0
                             ? String.fromCharCode(Number(parts[1]))
-                            : String(this.getValue(parts[1], 0, parts[1].length, ASS_STRING))[0] || ' ')
+                            : String(this.getValue(parts[1], 0, parts[1].length, C.ASS_STRING))[0] || ' ')
                         : ' ';
                     return chVal.repeat(Math.max(0, n));
                 }
                 if (upper.startsWith('HEX$(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                     return Math.trunc(Math.abs(n)).toString(16).toUpperCase();
                 }
                 if (upper.startsWith('OCT$(')) {
-                    const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                    const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                     return Math.trunc(Math.abs(n)).toString(8);
                 }
                 if (upper.startsWith('CENTER$(')) {
@@ -1028,22 +1033,22 @@ class Compiler {
                         let cols    = this.cols;
                         if (parts.length > 1) {
                             const n = Number(parts[1]);
-                            cols = (!Number.isNaN(n) && n > 0) ? n : this.lookup_(ASS_NUMBER, parts[1]);
+                            cols = (!Number.isNaN(n) && n > 0) ? n : this.lookup_(C.ASS_NUMBER, parts[1]);
                         }
                         text = text.startsWith('"')
                             ? text.slice(1, text.lastIndexOf('"'))
-                            : String(this.lookup_(ASS_STRING, text));
+                            : String(this.lookup_(C.ASS_STRING, text));
                         const padLen = Math.floor((cols - text.length) / 2);
                         return ' '.repeat(Math.max(0, padLen)) + text +
                                ' '.repeat(Math.max(0, cols - padLen - text.length));
                     }
                     if (upper.startsWith('UPPER$(')) {
                         const raw = this.extractValue(variableName, 1);
-                        return String(this.getValue(raw, 0, raw.length, ASS_STRING)).toUpperCase();
+                        return String(this.getValue(raw, 0, raw.length, C.ASS_STRING)).toUpperCase();
                     }
                     if (upper.startsWith('LOWER$(')) {
                         const raw = this.extractValue(variableName, 1);
-                        return String(this.getValue(raw, 0, raw.length, ASS_STRING)).toLowerCase();
+                        return String(this.getValue(raw, 0, raw.length, C.ASS_STRING)).toLowerCase();
                     }
                     if (upper.startsWith('MID$(')) {
                         // Quote-aware comma split so MID$(A$+",",2,1) works correctly.
@@ -1059,22 +1064,22 @@ class Compiler {
                                 start = ci + 1;
                             }
                         }
-                        const str = String(this.evalCalc(parts[0] || '', ASS_STRING));
+                        const str = String(this.evalCalc(parts[0] || '', C.ASS_STRING));
                         let startIdx = 0, length = str.length;
-                        if (parts.length > 1) startIdx = Math.floor(Number(this.evalCalc(parts[1], ASS_NUMBER))) - 1;
-                        if (parts.length > 2) length   = Math.floor(Number(this.evalCalc(parts[2], ASS_NUMBER)));
+                        if (parts.length > 1) startIdx = Math.floor(Number(this.evalCalc(parts[1], C.ASS_NUMBER))) - 1;
+                        if (parts.length > 2) length   = Math.floor(Number(this.evalCalc(parts[2], C.ASS_NUMBER)));
                         return str.substr(Math.max(0, startIdx), Math.max(0, length));
                     }
                     if (upper.startsWith('STR$(')) {
                         const raw = this.extractValue(upper, 1);
-                        return String(this.getValue(raw, 0, raw.length, ASS_NUMBER));
+                        return String(this.getValue(raw, 0, raw.length, C.ASS_NUMBER));
                     }
                     if (upper.startsWith('VFSGET$(')) {
                         // VFSGET$("path") — retrieve a VFS text file or asset as a string.
                         // Pull from variableName (original case), not upper — VFS paths
                         // are case-sensitive and must reach the lookup verbatim.
                         const raw = this.extractValue(variableName, 1);
-                        const pathArg = String(this.evalCalc(raw, ASS_STRING)).replace(/^"|"$/g, '');
+                        const pathArg = String(this.evalCalc(raw, C.ASS_STRING)).replace(/^"|"$/g, '');
                         // Check text files first, then assets
                         const _txt = this.fs ? this.fs.getTextFile(pathArg) : null;
                         if (_txt !== null) return _txt;
@@ -1090,7 +1095,7 @@ class Compiler {
                         // String return so it composes inside IF: IF FOLDEREXISTS$("test")="1" THEN ...
                         // Pull from variableName (original case) — see VFSGET$ note above.
                         const raw = this.extractValue(variableName, 1);
-                        const pathArg = String(this.evalCalc(raw, ASS_STRING)).replace(/^"|"$/g, '');
+                        const pathArg = String(this.evalCalc(raw, C.ASS_STRING)).replace(/^"|"$/g, '');
                         return (this.fs && this.fs.folderExists(pathArg)) ? '1' : '0';
                     }
                     if (upper.startsWith('CHR$(')) {
@@ -1101,24 +1106,24 @@ class Compiler {
                         // Pull from variableName (original case) — see MID$ note.
                         const raw   = this.extractValue(variableName, 1);
                         const ci    = raw.indexOf(',');
-                        const str   = ci >= 0 ? String(this.evalCalc(raw.substring(0, ci).trim(), ASS_STRING)) : String(this.lookup(raw));
-                        const len   = ci >= 0 ? Math.floor(Number(this.evalCalc(raw.substring(ci+1).trim(), ASS_NUMBER))) : str.length;
+                        const str   = ci >= 0 ? String(this.evalCalc(raw.substring(0, ci).trim(), C.ASS_STRING)) : String(this.lookup(raw));
+                        const len   = ci >= 0 ? Math.floor(Number(this.evalCalc(raw.substring(ci+1).trim(), C.ASS_NUMBER))) : str.length;
                         return str.slice(-Math.max(0, len));
                     }
                     if (upper.startsWith('LEFT$(')) {
                         // Pull from variableName (original case) — see MID$ note.
                         const raw   = this.extractValue(variableName, 1);
                         const ci    = raw.indexOf(',');
-                        const str   = ci >= 0 ? String(this.evalCalc(raw.substring(0, ci).trim(), ASS_STRING)) : String(this.lookup(raw));
-                        const len   = ci >= 0 ? Math.floor(Number(this.evalCalc(raw.substring(ci+1).trim(), ASS_NUMBER))) : str.length;
+                        const str   = ci >= 0 ? String(this.evalCalc(raw.substring(0, ci).trim(), C.ASS_STRING)) : String(this.lookup(raw));
+                        const len   = ci >= 0 ? Math.floor(Number(this.evalCalc(raw.substring(ci+1).trim(), C.ASS_NUMBER))) : str.length;
                         return str.substring(0, Math.max(0, len));
                     }
                     if (upper.startsWith('TAB$(')) {
-                        const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                        const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                         return ' '.repeat(Math.max(0, n));
                     }
                     if (upper.startsWith('LINES$(')) {
-                        const n = Number(this.evalCalc(this.extractValue(upper, 1), ASS_NUMBER, 0));
+                        const n = Number(this.evalCalc(this.extractValue(upper, 1), C.ASS_NUMBER, 0));
                         return '\n'.repeat(Math.max(0, n));
                     }
                 }
@@ -1127,9 +1132,9 @@ class Compiler {
                 break;
             }
 
-            case ASS_ARRAY_NUMBER:
-            case ASS_ARRAY_STRING:
-            case ASS_FUNCTION:
+            case C.ASS_ARRAY_NUMBER:
+            case C.ASS_ARRAY_STRING:
+            case C.ASS_FUNCTION:
                 break;  // handled by Map lookup below
 
             default:
@@ -1139,15 +1144,15 @@ class Compiler {
         // Search the variable store (O(1) Map lookup).
         const elem = element ?? 0;
         switch (type) {
-            case ASS_NUMBER: {
+            case C.ASS_NUMBER: {
                 const v = this.variables_numbers.get(variableName);
                 return v !== undefined ? Number(v) : 0;
             }
-            case ASS_STRING: {
+            case C.ASS_STRING: {
                 const v = this.variables_strings.get(variableName);
                 return v !== undefined ? String(v) : '';
             }
-            case ASS_ARRAY_NUMBER: {
+            case C.ASS_ARRAY_NUMBER: {
                 const arr = this.variables_arr_numbers.get(variableName);
                 if (arr) return Number(arr[elem] ?? 0);
                 // Check DEF FN table
@@ -1160,7 +1165,7 @@ class Compiler {
                 }
                 return 0;
             }
-            case ASS_ARRAY_STRING: {
+            case C.ASS_ARRAY_STRING: {
                 const arr = this.variables_arr_strings.get(variableName);
                 return arr ? String(arr[elem] ?? '') : '';
             }
@@ -1175,7 +1180,7 @@ class Compiler {
         const element = this.getElement(variableName);
         const parenOpen = variableName.indexOf('(');
 
-        if (varType !== ASS_ARRAY_NUMBER && varType !== ASS_ARRAY_STRING) {
+        if (varType !== C.ASS_ARRAY_NUMBER && varType !== C.ASS_ARRAY_STRING) {
             return this.lookup_(varType, variableName);
         }
         return this.lookup_(varType, parenOpen > 0 ? variableName.substring(0, parenOpen) : variableName, element);
@@ -1193,12 +1198,12 @@ class Compiler {
         // Scan right-to-left so the leftmost lowest-priority operator is found
         // (for left-to-right evaluation of equal-priority operators).
         let operPos  = -1;
-        let operType = OPER_NONE;
+        let operType = C.OPER_NONE;
         let depth    = 0;
         let inQuotes = false;
 
         // First pass: find minimum (lowest) priority among all top-level operators
-        let minPriority = OPER_POW + 1;
+        let minPriority = C.OPER_POW + 1;
         for (let i = 0; i < expr.length; i++) {
             const ch = expr[i];
             if (ch === '"') { inQuotes = !inQuotes; continue; }
@@ -1207,15 +1212,15 @@ class Compiler {
             if (ch === ')') { depth--; continue; }
             if (depth !== 0) continue;
             let p = 0;
-            if (ch === '+') p = OPER_PLUS;
-            else if (ch === '-') p = OPER_MINUS;
-            else if (ch === '%') p = OPER_MODULO;
-            else if (ch === '/') p = OPER_DIV;
-            else if (ch === '*') p = OPER_MUL;
-            else if (ch === '^') p = OPER_POW;
+            if (ch === '+') p = C.OPER_PLUS;
+            else if (ch === '-') p = C.OPER_MINUS;
+            else if (ch === '%') p = C.OPER_MODULO;
+            else if (ch === '/') p = C.OPER_DIV;
+            else if (ch === '*') p = C.OPER_MUL;
+            else if (ch === '^') p = C.OPER_POW;
             if (p > 0 && p < minPriority) minPriority = p;
         }
-        if (minPriority > OPER_POW) return null;
+        if (minPriority > C.OPER_POW) return null;
 
         // Second pass: find the LAST occurrence of that lowest-priority operator
         // (gives left-to-right evaluation for equal-priority ops like a-b-c).
@@ -1228,16 +1233,16 @@ class Compiler {
             if (ch === ')') { depth--; continue; }
             if (depth !== 0) continue;
             let p = 0;
-            if (ch === '+') p = OPER_PLUS;
-            else if (ch === '-') p = OPER_MINUS;
-            else if (ch === '%') p = OPER_MODULO;
-            else if (ch === '/') p = OPER_DIV;
-            else if (ch === '*') p = OPER_MUL;
-            else if (ch === '^') p = OPER_POW;
+            if (ch === '+') p = C.OPER_PLUS;
+            else if (ch === '-') p = C.OPER_MINUS;
+            else if (ch === '%') p = C.OPER_MODULO;
+            else if (ch === '/') p = C.OPER_DIV;
+            else if (ch === '*') p = C.OPER_MUL;
+            else if (ch === '^') p = C.OPER_POW;
             if (p === minPriority) { operPos = i; operType = p; }
         }
 
-        if (operType === OPER_NONE) return null;
+        if (operType === C.OPER_NONE) return null;
         return [operPos, operType];
     }
 
@@ -1248,7 +1253,7 @@ class Compiler {
     // -----------------------------------------------------------------------
     getValue(str, start, length, valType) {
         const s = str.substr(start, length).trim();
-        const isStrType = valType === ASS_STRING || valType === ASS_ARRAY_STRING;
+        const isStrType = valType === C.ASS_STRING || valType === C.ASS_ARRAY_STRING;
         if (!s) return isStrType ? '' : 0;
 
         // NOT prefix operator
@@ -1262,19 +1267,19 @@ class Compiler {
 
         // String literal.
         if (s0 === 34) { // '"'
-            if (isStrType || valType === ASS_ANY)
+            if (isStrType || valType === C.ASS_ANY)
                 return s.slice(1, s.lastIndexOf('"'));
         }
 
         // NOT prefix operator
         if (s0 === 78 && s.substring(0,4).toUpperCase() === 'NOT ') {
-            return ~Math.trunc(Number(this.evalCalc(s.substring(4).trim(), ASS_NUMBER, 0)));
+            return ~Math.trunc(Number(this.evalCalc(s.substring(4).trim(), C.ASS_NUMBER, 0)));
         }
 
         // Parenthesised sub-expression.
-        if (s0 === 40 && (valType === ASS_NUMBER || valType === ASS_ANY)) { // '('
+        if (s0 === 40 && (valType === C.ASS_NUMBER || valType === C.ASS_ANY)) { // '('
             const inner = s.slice(1, s.lastIndexOf(')'));
-            const result = this.evalCalc(inner, ASS_NUMBER, 0);
+            const result = this.evalCalc(inner, C.ASS_NUMBER, 0);
             if (result != null) return Number(result);
         }
 
@@ -1297,9 +1302,9 @@ class Compiler {
         }
 
         // Variable or function call.
-        // If ASS_ANY and the identifier ends with $ or is a known string function,
-        // delegate to ASS_STRING so STR$(), LEFT$() etc. work correctly.
-        if (valType === ASS_ANY) {
+        // If C.ASS_ANY and the identifier ends with $ or is a known string function,
+        // delegate to C.ASS_STRING so STR$(), LEFT$() etc. work correctly.
+        if (valType === C.ASS_ANY) {
             const sU = s.toUpperCase();
             const isStrFn = sU.startsWith('STR$(') || sU.startsWith('LEFT$(') ||
                             sU.startsWith('RIGHT$(') || sU.startsWith('MID$(') ||
@@ -1307,7 +1312,7 @@ class Compiler {
                             sU.startsWith('UPPER$(') || sU.startsWith('LOWER$(') ||
                             sU.startsWith('SPACE$(') || sU.startsWith('TAB$(') ||
                             (s.includes('$') && s.includes('('));
-            if (isStrFn) return this.getValue(s, 0, s.length, ASS_STRING);
+            if (isStrFn) return this.getValue(s, 0, s.length, C.ASS_STRING);
         }
         return this.lookup(s);
     }
@@ -1374,12 +1379,12 @@ class Compiler {
             if (ch === ')') { depth--; continue; }
             if (depth !== 0) continue;
             let prec = 0;
-            if      (ch === '+') prec = OPER_PLUS;
-            else if (ch === '-' && i > 0) prec = OPER_MINUS;
-            else if (ch === '%') prec = OPER_MODULO;
-            else if (ch === '/') prec = OPER_DIV;
-            else if (ch === '*') prec = OPER_MUL;
-            else if (ch === '^') prec = OPER_POW;
+            if      (ch === '+') prec = C.OPER_PLUS;
+            else if (ch === '-' && i > 0) prec = C.OPER_MINUS;
+            else if (ch === '%') prec = C.OPER_MODULO;
+            else if (ch === '/') prec = C.OPER_DIV;
+            else if (ch === '*') prec = C.OPER_MUL;
+            else if (ch === '^') prec = C.OPER_POW;
             if (prec > 0 && prec <= bestPrec) { bestPrec = prec; bestPos = i; }
         }
 
@@ -1413,27 +1418,27 @@ class Compiler {
         switch (node.t) {
             case 'n':  return node.v;
             case 's':  return node.v;
-            case 'v':  return (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) ? this.lookup_(ASS_STRING, node.v) : this.lookup_(ASS_NUMBER, node.v);
-            case 'vs': return this.lookup_(ASS_STRING, node.v);
-            case 'neg': return -Number(this._evalExprTree(node.c, ASS_NUMBER));
+            case 'v':  return (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING) ? this.lookup_(C.ASS_STRING, node.v) : this.lookup_(C.ASS_NUMBER, node.v);
+            case 'vs': return this.lookup_(C.ASS_STRING, node.v);
+            case 'neg': return -Number(this._evalExprTree(node.c, C.ASS_NUMBER));
             case 'raw': return this.getValue(node.v, 0, node.v.length, assignType);
             case 'op': {
                 const l = this._evalExprTree(node.l, assignType);
                 const r = this._evalExprTree(node.r, assignType);
                 switch (node.op) {
-                    case OPER_PLUS:
-                        if (assignType===ASS_STRING||assignType===ASS_ARRAY_STRING)
+                    case C.OPER_PLUS:
+                        if (assignType===C.ASS_STRING||assignType===C.ASS_ARRAY_STRING)
                             return String(l)+String(r);
-                        if (assignType===ASS_ANY &&
+                        if (assignType===C.ASS_ANY &&
                             (typeof l==='string'||typeof r==='string'||
                              Number.isNaN(Number(l))||Number.isNaN(Number(r))))
                             return String(l)+String(r);
                         return Number(l)+Number(r);
-                    case OPER_MINUS:  return Number(l)-Number(r);
-                    case OPER_MUL:    return Number(l)*Number(r);
-                    case OPER_DIV:    return Number(r)!==0 ? Number(l)/Number(r) : 0;
-                    case OPER_MODULO: return Number(r)!==0 ? Number(l)%Number(r) : 0;
-                    case OPER_POW:    return Math.pow(Number(l),Number(r));
+                    case C.OPER_MINUS:  return Number(l)-Number(r);
+                    case C.OPER_MUL:    return Number(l)*Number(r);
+                    case C.OPER_DIV:    return Number(r)!==0 ? Number(l)/Number(r) : 0;
+                    case C.OPER_MODULO: return Number(r)!==0 ? Number(l)%Number(r) : 0;
+                    case C.OPER_POW:    return Math.pow(Number(l),Number(r));
                     default:          return l;
                 }
             }
@@ -1473,7 +1478,7 @@ class Compiler {
 
     evalCalc(calculation, assignType, level = 0) {
         const s = calculation.trim();
-        if (!s) return (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) ? '' : 0;
+        if (!s) return (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING) ? '' : 0;
 
         // ── OOP pre-checks (must run BEFORE the expression cache because
         //     they introduce side effects — NEW allocates, method calls run
@@ -1497,8 +1502,8 @@ class Compiler {
         if (isIdx >= 0) {
             const left  = s.substring(0, isIdx).trim();
             const right = s.substring(isIdx + 4).trim();
-            const a = Number(this.evalCalc(left,  ASS_NUMBER, level + 1)) || 0;
-            const b = Number(this.evalCalc(right, ASS_NUMBER, level + 1)) || 0;
+            const a = Number(this.evalCalc(left,  C.ASS_NUMBER, level + 1)) || 0;
+            const b = Number(this.evalCalc(right, C.ASS_NUMBER, level + 1)) || 0;
             return (a === b) ? 1 : 0;
         }
         const dotIdx = this._findToplevelMemberDot(s);
@@ -1513,7 +1518,7 @@ class Compiler {
         // ── OPT-CACHE: Use pre-parsed expression tree for hot expressions ──
         // Only cache at the top level (level===0) and for non-string types.
         // Never cache volatile built-ins or expressions containing them.
-        if (level === 0 && this._exprCache && assignType !== ASS_STRING && assignType !== ASS_ARRAY_STRING) {
+        if (level === 0 && this._exprCache && assignType !== C.ASS_STRING && assignType !== C.ASS_ARRAY_STRING) {
             // Quick volatile check — skip cache for known dynamic identifiers
             const su = s.toUpperCase();
             const isVolatile = Compiler._VOLATILE.has(su) ||
@@ -1535,7 +1540,7 @@ class Compiler {
                 }
                 if (node) {
                     const result = this._evalExprTree(node, assignType);
-                    if (assignType === ASS_ANY) {
+                    if (assignType === C.ASS_ANY) {
                         // Preserve strings — don't coerce "10" back to number 10
                         // as that would break string concatenation like STR$(X)+"pts"
                         return result;
@@ -1572,10 +1577,10 @@ class Compiler {
             }
             if (simple) {
                 // Variables are case-sensitive — pass original case to lookup_.
-                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) {
-                    return this.lookup_(ASS_STRING, s);
+                if (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING) {
+                    return this.lookup_(C.ASS_STRING, s);
                 } else {
-                    return this.lookup_(ASS_NUMBER, s);
+                    return this.lookup_(C.ASS_NUMBER, s);
                 }
             }
         }
@@ -1585,7 +1590,7 @@ class Compiler {
         if (s[0] === '-' && s.length > 1) {
             const rest = s.substring(1).trim();
             if (isNaN(Number(s))) {
-                return -Number(this.evalCalc(rest, ASS_NUMBER, level + 1));
+                return -Number(this.evalCalc(rest, C.ASS_NUMBER, level + 1));
             }
         }
 
@@ -1602,12 +1607,12 @@ class Compiler {
             if (depth !== 0) continue;
 
             let prec = 0;
-            if (ch === '+') prec = OPER_PLUS;
-            else if (ch === '-' && i > 0) prec = OPER_MINUS;
-            else if (ch === '%') prec = OPER_MODULO;
-            else if (ch === '/') prec = OPER_DIV;
-            else if (ch === '*') prec = OPER_MUL;
-            else if (ch === '^') prec = OPER_POW;
+            if (ch === '+') prec = C.OPER_PLUS;
+            else if (ch === '-' && i > 0) prec = C.OPER_MINUS;
+            else if (ch === '%') prec = C.OPER_MODULO;
+            else if (ch === '/') prec = C.OPER_DIV;
+            else if (ch === '*') prec = C.OPER_MUL;
+            else if (ch === '^') prec = C.OPER_POW;
 
             if (prec > 0 && prec <= bestPrec) {
                 bestPrec = prec;
@@ -1629,11 +1634,11 @@ class Compiler {
                 if (allWrapped) return this.evalCalc(s.slice(1, -1), assignType, level + 1);
             }
             const val = this.getValue(s, 0, s.length, assignType);
-            if (assignType === ASS_ANY) {
+            if (assignType === C.ASS_ANY) {
                 // Preserve the value as-is — strings stay strings so concat works.
                 return val;
             }
-            return (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING)
+            return (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING)
                 ? String(val) : Number(val);
         }
 
@@ -1646,34 +1651,34 @@ class Compiler {
 
         let result;
         switch (bestPrec) {
-            case OPER_PLUS:
-                if (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING) {
+            case C.OPER_PLUS:
+                if (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING) {
                     result = String(lVal) + String(rVal);
-                } else if (assignType === ASS_ANY &&
+                } else if (assignType === C.ASS_ANY &&
                            (typeof lVal === 'string' || typeof rVal === 'string' ||
                             Number.isNaN(Number(lVal)) || Number.isNaN(Number(rVal)))) {
-                    // ASS_ANY: if either side is a string, concatenate
+                    // C.ASS_ANY: if either side is a string, concatenate
                     result = String(lVal) + String(rVal);
                 } else {
                     result = Number(lVal) + Number(rVal);
                 }
                 break;
-            case OPER_MINUS:  result = Number(lVal) - Number(rVal); break;
-            case OPER_MUL:    result = Number(lVal) * Number(rVal); break;
-            case OPER_DIV:
+            case C.OPER_MINUS:  result = Number(lVal) - Number(rVal); break;
+            case C.OPER_MUL:    result = Number(lVal) * Number(rVal); break;
+            case C.OPER_DIV:
                 if (Number(rVal) !== 0) { result = Number(lVal) / Number(rVal); }
                 else { this.current_error = -1; result = 0; }
                 break;
-            case OPER_MODULO: result = Number(rVal) !== 0 ? Number(lVal) % Number(rVal) : 0; break;
-            case OPER_POW:    result = Math.pow(Number(lVal), Number(rVal)); break;
+            case C.OPER_MODULO: result = Number(rVal) !== 0 ? Number(lVal) % Number(rVal) : 0; break;
+            case C.OPER_POW:    result = Math.pow(Number(lVal), Number(rVal)); break;
             default:          result = lVal; break;
         }
 
-        if (assignType === ASS_ANY) {
+        if (assignType === C.ASS_ANY) {
             // Preserve value — strings stay strings so concat works correctly.
             return result;
         }
-        return (assignType === ASS_STRING || assignType === ASS_ARRAY_STRING)
+        return (assignType === C.ASS_STRING || assignType === C.ASS_ARRAY_STRING)
             ? String(result) : Number(result);
     }
 
@@ -1731,10 +1736,10 @@ class Compiler {
                     const simpleVar = /^[A-Za-z_][A-Za-z0-9_]*(\$)?$/.test(recvRaw);
                     const declaredClass = simpleVar && this._dimClass ? this._dimClass[recvRaw] : null;
                     if (declaredClass) {
-                        selfHandle = Number(this.evalCalc(recvRaw, ASS_NUMBER, 0)) || 0;
+                        selfHandle = Number(this.evalCalc(recvRaw, C.ASS_NUMBER, 0)) || 0;
                         if (selfHandle) isOopWrite = true;
                     } else if (this._oopObjects) {
-                        const tryHandle = Number(this.evalCalc(recvRaw, ASS_NUMBER, 0)) || 0;
+                        const tryHandle = Number(this.evalCalc(recvRaw, C.ASS_NUMBER, 0)) || 0;
                         if (tryHandle && this._oopObjects.has(tryHandle)) {
                             selfHandle = tryHandle;
                             isOopWrite = true;
@@ -1750,7 +1755,7 @@ class Compiler {
                 const upper = fieldName.toUpperCase();
                 // Evaluate RHS in correct type (string if field-name ends with $).
                 const isStr = fieldName.endsWith('$');
-                const val   = this.evalCalc(assignment, isStr ? ASS_STRING : ASS_NUMBER, 0);
+                const val   = this.evalCalc(assignment, isStr ? C.ASS_STRING : C.ASS_NUMBER, 0);
                 inst.fields.set(upper, isStr ? String(val == null ? '' : val) : Number(val) || 0);
                 // Also reflect into the current method's bare-name scope so
                 // subsequent reads in the same method see the new value
@@ -1773,7 +1778,7 @@ class Compiler {
 
         // ── OPT-ASSIGN: fast path for simple numeric variable assignments ──
         // e.g. ZR=TMP, IT=IT+1, ZR=ZR*ZR-ZI*ZI+CR — use expression cache
-        if (assType === ASS_NUMBER && this._exprCache !== undefined) {
+        if (assType === C.ASS_NUMBER && this._exprCache !== undefined) {
             const au = assignment.toUpperCase();
             const isVolatile = au.includes('TIMER') || au.includes('INKEY') ||
                                au.includes('SECONDS') || au.includes('RND') ||
@@ -1793,7 +1798,7 @@ class Compiler {
                     }
                 }
                 if (node) {
-                    const calc = this._evalExprTree(node, ASS_NUMBER);
+                    const calc = this._evalExprTree(node, C.ASS_NUMBER);
                     // Variables are case-sensitive — store under original-case varName.
                     this.variables_numbers.set(varName, Number(calc));
                     return null;
@@ -1809,7 +1814,7 @@ class Compiler {
             return this.error_syntax;
         }
 
-        this.assign_(assType, varName, (assType === ASS_NUMBER || assType === ASS_ARRAY_NUMBER)
+        this.assign_(assType, varName, (assType === C.ASS_NUMBER || assType === C.ASS_ARRAY_NUMBER)
             ? Number(calc)
             : calc);
         return null;
@@ -1828,7 +1833,7 @@ class Compiler {
 
         // If it contains operators, evaluate it.
         if (/[-+*/^%]/.test(inner)) {
-            return this.evalCalc(inner, ASS_NUMBER, 0);
+            return this.evalCalc(inner, C.ASS_NUMBER, 0);
         }
         return this.lookup(inner);
     }
@@ -1847,7 +1852,7 @@ class Compiler {
             }
             return s;
         }
-        if (s.length > 0) return this.evalCalc(s, ASS_ANY, 0);
+        if (s.length > 0) return this.evalCalc(s, C.ASS_ANY, 0);
         return null;
     }
 
@@ -2005,18 +2010,18 @@ class Compiler {
             case 'and':    return this._evalCondTree(ct.l) && this._evalCondTree(ct.r);
             case 'not':    return !this._evalCondTree(ct.c);
             case 'truthy':
-                return ct.node ? Number(this._evalExprTree(ct.node, ASS_NUMBER)) !== 0
-                               : Number(this.evalCalc(ct.raw, ASS_NUMBER)) !== 0;
+                return ct.node ? Number(this._evalExprTree(ct.node, C.ASS_NUMBER)) !== 0
+                               : Number(this.evalCalc(ct.raw, C.ASS_NUMBER)) !== 0;
             case 'cmp': {
                 let l, r;
                 if (ct.isStr) {
-                    l = String(this.evalCalc(ct.lRaw, ASS_STRING));
-                    r = String(this.evalCalc(ct.rRaw, ASS_STRING));
+                    l = String(this.evalCalc(ct.lRaw, C.ASS_STRING));
+                    r = String(this.evalCalc(ct.rRaw, C.ASS_STRING));
                 } else {
-                    l = ct.lNode ? Number(this._evalExprTree(ct.lNode, ASS_NUMBER))
-                                 : Number(this.evalCalc(ct.lRaw, ASS_NUMBER));
-                    r = ct.rNode ? Number(this._evalExprTree(ct.rNode, ASS_NUMBER))
-                                 : Number(this.evalCalc(ct.rRaw, ASS_NUMBER));
+                    l = ct.lNode ? Number(this._evalExprTree(ct.lNode, C.ASS_NUMBER))
+                                 : Number(this.evalCalc(ct.lRaw, C.ASS_NUMBER));
+                    r = ct.rNode ? Number(this._evalExprTree(ct.rNode, C.ASS_NUMBER))
+                                 : Number(this.evalCalc(ct.rRaw, C.ASS_NUMBER));
                 }
                 switch (ct.cond) {
                     case 'eq': return l===r;
@@ -2127,8 +2132,8 @@ class Compiler {
                                  left.includes('$(')   || right.includes('$(');
 
             if (isStringCmp) {
-                const sLeft  = String(this.evalCalc(left,  ASS_STRING) ?? '');
-                const sRight = String(this.evalCalc(right, ASS_STRING) ?? '');
+                const sLeft  = String(this.evalCalc(left,  C.ASS_STRING) ?? '');
+                const sRight = String(this.evalCalc(right, C.ASS_STRING) ?? '');
                 switch (cond) {
                     case 'eq': bReturn = sLeft === sRight; break;
                     case 'ne': bReturn = sLeft !== sRight; break;
@@ -2138,8 +2143,8 @@ class Compiler {
                     case 'le': bReturn = sLeft <=  sRight; break;
                 }
             } else {
-                const iLeft  = Number(this.evalCalc(left,  ASS_NUMBER));
-                const iRight = Number(this.evalCalc(right, ASS_NUMBER));
+                const iLeft  = Number(this.evalCalc(left,  C.ASS_NUMBER));
+                const iRight = Number(this.evalCalc(right, C.ASS_NUMBER));
                 switch (cond) {
                     case 'eq': bReturn = iLeft === iRight; break;
                     case 'ne': bReturn = iLeft !== iRight; break;
@@ -2154,7 +2159,7 @@ class Compiler {
         // If no comparison operator found, evaluate curArg as a truthy number.
         // Handles: IF KEYDOWN(87) THEN, IF FLAG THEN, IF RUNNING THEN etc.
         if (cond === '') {
-            const val = Number(this.evalCalc(curArg, ASS_NUMBER));
+            const val = Number(this.evalCalc(curArg, C.ASS_NUMBER));
             bReturn = val !== 0;
         }
 

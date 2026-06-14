@@ -1,4 +1,6 @@
 'use strict';
+import * as C from '../constants.js';
+
 
 // ---------------------------------------------------------------------------
 // ProcessMemory  (core/kernel/process_memory.js)
@@ -20,7 +22,7 @@
 //   heap       — _memory (64K byte array), optionBase, dimInfo, arrMax
 // ---------------------------------------------------------------------------
 
-class ProcessMemory {
+export class ProcessMemory {
 
     constructor() {
         this.reset();
@@ -31,7 +33,7 @@ class ProcessMemory {
     reset() {
 
         // ── Program store ──────────────────────────────────────────────────
-        this.lines          = new Array(MAX_LINES).fill('');
+        this.lines          = new Array(C.MAX_LINES).fill('');
         this.lines_assigned = new Set();
         this._lineCache     = null;   // built at RUN time
         this._exprCache     = new Map();

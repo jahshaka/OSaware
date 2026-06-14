@@ -1,5 +1,8 @@
 'use strict';
 
+import * as C from './constants.js';
+import { LocalStorageProvider } from './storage/local_provider.js';
+
 // ---------------------------------------------------------------------------
 // VirtualFs  (modernised from ngbasic-0.2-vfs.js)
 //
@@ -7,10 +10,10 @@
 // and via the server (WEB: prefix).
 //
 // File format (in-memory): [ [lineNumber, 'BASIC line text'], ... ]
-// loadFile returns a sparse Array of length MAX_LINES where each occupied
+// loadFile returns a sparse Array of length C.MAX_LINES where each occupied
 // slot holds the BASIC text for that line number.
 // ---------------------------------------------------------------------------
-class VirtualFs {
+export class VirtualFs {
     constructor(storageProvider) {
         // Storage provider — defaults to LocalStorageProvider (single-tenant
         // browser mode). A RemoteStorageProvider can be injected later for
@@ -2959,8 +2962,7 @@ class VirtualFs {
                 [990, 'FOR I=1 TO 10'],
                 [1000, 'IF PRHIT(I)=0 AND INT(PRC(I)/CELL)=CX AND INT(PRZ(I)/CELL)=CZ THEN PRHIT(I)=1 : SCORE+=10'],
                 [1010, 'IF PRHIT(I)=1 AND PRHID(I)=0 THEN GL.HIDE PRID(I) : PRHID(I)=1'],
-                [1020, 'GL.ROTATE PRID(I), PSPIN, PSPIN*0.8, PSPIN*0.5'],
-                [1030, 'GL.SCALE PRID(I), PSCAL, PSCAL, PSCAL'],
+                [1015, 'IF PRHID(I)=0 THEN GL.ROTATE PRID(I), PSPIN, PSPIN*0.8, PSPIN*0.5 : GL.SCALE PRID(I), PSCAL, PSCAL, PSCAL'],
                 [1040, 'NEXT I'],
                 [1050, 'SLEEP 16 : GOTO MainLoop'],
                 [1060, 'REM Fall-through guard: GameOver/WinOver are entered via GOTO only. CALL must be on its own line — colon-tails after CALL get swallowed as params.'],
@@ -3044,7 +3046,7 @@ class VirtualFs {
                 [6010, 'REM  BuildScene - GL init, floor, ceiling, walls, goal orb'],
                 [6020, 'REM ============================================================'],
                 [6030, 'SUB BuildScene STATIC'],
-                [6040, '   GL.INIT : GL.PERSPECTIVE 72 : GL.AMBIENT 0.06'],
+                [6040, '   GL.INIT : GL.PERSPECTIVE 72, 0, 0.1 : GL.AMBIENT 0.06'],
                 [6050, '   GL.FOG 4,3,4,6,32'],
                 [6060, '   FL=16*5.0'],
                 [6070, '   GL.SOLID : GL.COLOUR 255,255,255 : GL.SHINE 2 : GL.ALPHA 1.0'],
@@ -5446,7 +5448,7 @@ class VirtualFs {
                 [14880, '   IF REC$(FRJ)<>"" THEN PRINT "  ";REC$(FRJ)'],
                 [14890, 'NEXT FRI'],
                 [14900, 'PRINT ""'],
-                [14910, 'RETURN'],,
+                [14910, 'RETURN'],
                 [15000, 'REM ============================================================'],
                 [15010, 'REM   TRACK BUILDER  --  port of TRACKBUILDER track-gen pipeline.'],
                 [15020, 'REM   Inputs (set before GOSUB TrkBuild):'],
@@ -8131,7 +8133,7 @@ class VirtualFs {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    // Build a sparse MAX_LINES array from a stored [[lineNo, text], ...] list.
+    // Build a sparse C.MAX_LINES array from a stored [[lineNo, text], ...] list.
     // Hardened: validates each entry. Malformed entries (undefined holes,
     // non-arrays, wrong arity, non-numeric line numbers, non-string text,
     // out-of-range line numbers) are skipped with a console warning rather
@@ -8164,7 +8166,7 @@ class VirtualFs {
     }
 
     _buildLineArray(pairs) {
-        const arr = new Array(MAX_LINES).fill('');
+        const arr = new Array(C.MAX_LINES).fill('');
         if (!pairs || typeof pairs[Symbol.iterator] !== 'function') {
             console.warn('VFS: _buildLineArray called with non-iterable:', pairs);
             return arr;
@@ -8191,7 +8193,7 @@ class VirtualFs {
             }
             const lineNo = item[0];
             const text   = item[1];
-            if (typeof lineNo !== 'number' || !Number.isFinite(lineNo) || lineNo < 0 || lineNo >= MAX_LINES) {
+            if (typeof lineNo !== 'number' || !Number.isFinite(lineNo) || lineNo < 0 || lineNo >= C.MAX_LINES) {
                 console.warn('VFS: malformed program entry at index ' + idx + ' (bad line number ' + lineNo + ')');
                 badCount++;
                 continue;
@@ -8222,15 +8224,15 @@ class VirtualFs {
 
     // -----------------------------------------------------------------------
     // _parseFileText  –  convert a raw text file (numbered lines) into a
-    // sparse MAX_LINES array.
+    // sparse C.MAX_LINES array.
     // -----------------------------------------------------------------------
     _parseFileText(text) {
-        const arr = new Array(MAX_LINES).fill('');
+        const arr = new Array(C.MAX_LINES).fill('');
         for (const rawLine of text.split('\n')) {
             const spacePos = rawLine.indexOf(' ');
             if (spacePos > 0) {
                 const lineNo = parseInt(rawLine.substring(0, spacePos), 10);
-                if (!isNaN(lineNo) && lineNo >= 0 && lineNo < MAX_LINES) {
+                if (!isNaN(lineNo) && lineNo >= 0 && lineNo < C.MAX_LINES) {
                     arr[lineNo] = rawLine.substring(spacePos + 1).replace(/\r$/, '');
                 }
             }
@@ -8321,7 +8323,7 @@ class VirtualFs {
 
     // -----------------------------------------------------------------------
     // loadFile  –  load from virtual FS or remote.
-    // Returns a sparse MAX_LINES Array on success, 0 for a listing, -1 on error.
+    // Returns a sparse C.MAX_LINES Array on success, 0 for a listing, -1 on error.
     // -----------------------------------------------------------------------
     loadFile(filename, interpreter) {
         if (filename.startsWith('WEB:')) {
@@ -8646,7 +8648,7 @@ class VirtualFs {
 
     // -----------------------------------------------------------------------
     // saveFile  –  save to virtual FS or remote.
-    // `lineData` is the sparse MAX_LINES array from the interpreter.
+    // `lineData` is the sparse C.MAX_LINES array from the interpreter.
     // Returns true on success.
     // -----------------------------------------------------------------------
     saveFile(filename, lineData, password) {

@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 // linePrinter  –  opens a popup window that emulates a line-printer output.
 // ---------------------------------------------------------------------------
-class LinePrinter {
+export class LinePrinter {
     constructor() {
         this.version  = '0.2';
         this.lpWindow = null;
@@ -50,7 +50,7 @@ class LinePrinter {
 // ---------------------------------------------------------------------------
 // History  –  stores previously-typed command lines with de-duplication.
 // ---------------------------------------------------------------------------
-class History {
+export class History {
     constructor() {
         this.version = '0.1';
         this.lines   = [];

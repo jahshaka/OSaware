@@ -1,5 +1,9 @@
 'use strict';
 
+import * as C from '../constants.js';
+import * as THREE from 'three';
+
+
 // ---------------------------------------------------------------------------
 // GfxDriver  (drivers/gfx.js)
 //
@@ -9,7 +13,7 @@
 // and _activateGraphics.
 // ---------------------------------------------------------------------------
 
-class GfxDriver {
+export class GfxDriver {
 
     constructor(host) {
         this._host           = host;
@@ -96,11 +100,11 @@ class GfxDriver {
             const target = this.canvas || this.o;
             if (target) target.style.background = this.colours[this.colour_bg];
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdCIRCLE(params) {
-        if (params.length < 3) return CMD_ESYNTAX;
+        if (params.length < 3) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const cx  = Number(params[0]), cy  = Number(params[1]);
         const r   = Number(params[2]);
@@ -108,51 +112,51 @@ class GfxDriver {
         this._gfxScene();
         this._gfxCircle(cx, cy, r, this._gfxColour(col));
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdPOINT(params) {
-        if (params.length < 2) return CMD_ESYNTAX;
+        if (params.length < 2) return C.CMD_ESYNTAX;
         return this.cmdCIRCLE([params[0], params[1], 1]);
     }
 
 // FILLCIRCLE x, y, r [, col] — draw a solid filled circle.
     cmdFILLCIRCLE(params) {
-        if (params.length < 3) return CMD_ESYNTAX;
+        if (params.length < 3) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const col = params.length > 3 ? Number(params[3]) : this.colour_fg_cursor;
         this._gfxScene();
         this._gfxFillCircle(Number(params[0]), Number(params[1]),
                             Number(params[2]), this._gfxColour(col));
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdRECT(params) {
-        if (params.length < 4) return CMD_ESYNTAX;
+        if (params.length < 4) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const col  = params.length > 4 ? Number(params[4]) : this.colour_fg_cursor;
         this._gfxScene();
         this._gfxRect(Number(params[0]), Number(params[1]),
                       Number(params[2]), Number(params[3]), this._gfxColour(col));
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // FILLRECT x1,y1,x2,y2[,col] — draw a solid filled rectangle.
     cmdFILLRECT(params) {
-        if (params.length < 4) return CMD_ESYNTAX;
+        if (params.length < 4) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const col  = params.length > 4 ? Number(params[4]) : this.colour_fg_cursor;
         this._gfxScene();
         this._gfxFillRect(Number(params[0]), Number(params[1]),
                           Number(params[2]), Number(params[3]), this._gfxColour(col));
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLINE(params) {
-        if (params.length < 2) return CMD_ESYNTAX;
+        if (params.length < 2) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const col = params.length > 4 ? Number(params[4]) : this.colour_fg_cursor;
         const rgba = this._gfxColour(col);
@@ -162,7 +166,7 @@ class GfxDriver {
         const y1 = params.length >= 4 ? Number(params[3]) : y0;
         this._gfxLine(x0, y0, x1, y1, rgba);
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // -----------------------------------------------------------------------
@@ -174,7 +178,7 @@ class GfxDriver {
 // If the line does not exist, the prompt is pre-filled with just the line
 // number so the user can type a new line at that position.
     cmdEDIT(params) {
-        if (!params || params[0] == null) return CMD_ESYNTAX;
+        if (!params || params[0] == null) return C.CMD_ESYNTAX;
 
         // Accept line number or label name
         let lineNo = parseInt(params[0], 10);
@@ -184,10 +188,10 @@ class GfxDriver {
             lineNo = this._labels[lbl.toUpperCase()] ?? -1;
             if (lineNo < 0) {
                 this.appendLine(`Label not found: ${lbl}`, 1);
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
-        if (lineNo < 0 || lineNo >= MAX_LINES) return CMD_ESYNTAX;
+        if (lineNo < 0 || lineNo >= C.MAX_LINES) return C.CMD_ESYNTAX;
 
         const existing = this.lines[lineNo] !== '' ? this.lines[lineNo] : '';
         const prefill  = lineNo + (existing ? ' ' + existing : ' ');
@@ -200,10 +204,10 @@ class GfxDriver {
 
         this.want_input     = 1;
         this.input_var      = '__EDIT__';
-        this.input_var_type = ASS_STRING;
+        this.input_var_type = C.ASS_STRING;
 
         this._redrawInputLine();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // -----------------------------------------------------------------------
@@ -233,7 +237,7 @@ class GfxDriver {
     }
 
     cmdPSET(params) {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         // Fast path: if graphics already active and gfx scene ready, inline the plot
         // to avoid 4 function calls per pixel (critical for Mandelbrot performance)
         if (this._graphicsActive && this._gfx) {
@@ -247,7 +251,7 @@ class GfxDriver {
                 if (col === -1) {
                     g.buf[i] = 0; g.buf[i+1] = 0; g.buf[i+2] = 0; g.buf[i+3] = 0;
                     g.dirty = true;
-                    return CMD_OK;
+                    return C.CMD_OK;
                 }
                 // Use pre-built colour table if available, else fall back
                 const ct = this._gfxColourTable;
@@ -256,27 +260,27 @@ class GfxDriver {
                     : this._gfxColour(col);
                 g.buf[i] = rgba[0]; g.buf[i+1] = rgba[1]; g.buf[i+2] = rgba[2]; g.buf[i+3] = 255;
                 g.dirty = true;
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
         this._activateGraphics();
         const col = params.length > 2 ? Number(params[2]) : this.colour_fg_cursor;
         this._gfxScene();
         this._gfxPlot(Number(params[0]), Number(params[1]), this._gfxColour(col));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdPRESET(params) {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const col = params.length > 2 ? Number(params[2]) : this.colour_bg;
         this._gfxScene();
         this._gfxPlot(Number(params[0]), Number(params[1]), this._gfxColour(col));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdPAINT(params) {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         this._activateGraphics();
         const x   = Math.floor(Number(params[0]));
         const y   = Math.floor(Number(params[1]));
@@ -287,7 +291,7 @@ class GfxDriver {
         const borderRgba = borderCol !== null ? this._gfxColour(borderCol) : null;
         this._gfxPaint(x, y, rgba, borderRgba);
         this._gfxFlush();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // -----------------------------------------------------------------------
@@ -297,7 +301,7 @@ class GfxDriver {
 // Execution pauses while the image loads, then resumes automatically.
 // -----------------------------------------------------------------------
     cmdIMAGE(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
 
         // Parse param: either IMAGE "url"  (auto-fit)
         //              or     IMAGE x, y, "url" [, w, h]  (positioned)
@@ -325,15 +329,15 @@ class GfxDriver {
             else url = String(this.lookup(urlArg) || urlArg);
             x = 0; y = 0; w = 0; h = 0;  // resolved in onload
         } else {
-            x   = Number(this.evalCalc(args[0], ASS_NUMBER));
-            y   = Number(this.evalCalc(args[1], ASS_NUMBER));
-            w   = args.length > 3 ? Number(this.evalCalc(args[3], ASS_NUMBER)) : 0;
-            h   = args.length > 4 ? Number(this.evalCalc(args[4], ASS_NUMBER)) : 0;
+            x   = Number(this.evalCalc(args[0], C.ASS_NUMBER));
+            y   = Number(this.evalCalc(args[1], C.ASS_NUMBER));
+            w   = args.length > 3 ? Number(this.evalCalc(args[3], C.ASS_NUMBER)) : 0;
+            h   = args.length > 4 ? Number(this.evalCalc(args[4], C.ASS_NUMBER)) : 0;
             const urlArg = args[2];
             if (urlArg.startsWith('"') && urlArg.endsWith('"')) url = urlArg.slice(1, -1);
             else url = String(this.lookup(urlArg) || urlArg);
         }
-        if (!url) return CMD_ESYNTAX;
+        if (!url) return C.CMD_ESYNTAX;
 
         this.want_ai = 1;
         if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
@@ -393,7 +397,7 @@ class GfxDriver {
         // Resolve through VFS asset store first (avoids CORS on file:// protocol)
         const resolved = this._imgResolve(url);
         img.src = resolved || url;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // =======================================================================
@@ -466,10 +470,10 @@ class GfxDriver {
 //   Data URLs:        "data:image/..."     (direct store)
     cmdLOADIMG(param) {
         const args = this._splitArgs(param, 2);
-        if (args.length < 2) return CMD_ESYNTAX;
+        if (args.length < 2) return C.CMD_ESYNTAX;
         const name = args[0];
         let url  = args[1];
-        if (!name || !url) return CMD_ESYNTAX;
+        if (!name || !url) return C.CMD_ESYNTAX;
 
         // Strip any remaining outer quotes (defensive)
         const bare = url.replace(/^"|"$/g, '').trim();
@@ -477,7 +481,7 @@ class GfxDriver {
         // ── Data URL: store directly, no fetch needed ─────────────────────
         if (bare.startsWith('data:')) {
             this._imgStore()[name] = bare;
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // ── VFS asset path (contains '/' but NOT a network URL) ───────────
@@ -486,7 +490,7 @@ class GfxDriver {
             const assetData = this.fs.getAsset(bare);
             if (assetData) {
                 this._imgStore()[name] = assetData;
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
 
@@ -510,21 +514,21 @@ class GfxDriver {
             // Error already reported by _imgLoad
             this._imgResume();
         });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // DISPLAY "name" [,x,y [,w,h]] — draw a stored image to the canvas.
     cmdDISPLAY(param) {
         const args = this._splitArgs(param, 5);
-        if (!args[0]) return CMD_ESYNTAX;
+        if (!args[0]) return C.CMD_ESYNTAX;
         const name = args[0];
-        const x    = args.length > 1 ? Number(this.evalCalc(args[1], ASS_NUMBER)) : 0;
-        const y    = args.length > 2 ? Number(this.evalCalc(args[2], ASS_NUMBER)) : 0;
-        const w    = args.length > 3 ? Number(this.evalCalc(args[3], ASS_NUMBER)) : 0;
-        const h    = args.length > 4 ? Number(this.evalCalc(args[4], ASS_NUMBER)) : 0;
+        const x    = args.length > 1 ? Number(this.evalCalc(args[1], C.ASS_NUMBER)) : 0;
+        const y    = args.length > 2 ? Number(this.evalCalc(args[2], C.ASS_NUMBER)) : 0;
+        const w    = args.length > 3 ? Number(this.evalCalc(args[3], C.ASS_NUMBER)) : 0;
+        const h    = args.length > 4 ? Number(this.evalCalc(args[4], C.ASS_NUMBER)) : 0;
 
         const url = this._imgResolve(name);
-        if (!url) { this.appendLine('DISPLAY: image not found: ' + name, 1); return CMD_OK; }
+        if (!url) { this.appendLine('DISPLAY: image not found: ' + name, 1); return C.CMD_OK; }
 
         const doRender = (img) => {
             this._activateGraphics();
@@ -558,7 +562,7 @@ class GfxDriver {
         // render it directly — synchronously since it's already loaded.
         if (url && typeof url === 'object' && url.tagName === 'IMG') {
             doRender(url);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Data URL — create Image synchronously, no network fetch needed.
@@ -566,7 +570,7 @@ class GfxDriver {
             const img = new Image();
             img.onload = () => doRender(img);
             img.src = url;
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Remote URL (http/https) or relative — async fetch, pause execution.
@@ -574,27 +578,27 @@ class GfxDriver {
             doRender(img);
             this._imgResume();
         });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // IMGLIST — print names of all stored images.
     cmdIMGLIST() {
         const store = this._imgStore();
         const names = Object.keys(store);
-        if (names.length === 0) { this.appendLine('  (no images loaded)', 1); return CMD_OK; }
+        if (names.length === 0) { this.appendLine('  (no images loaded)', 1); return C.CMD_OK; }
         for (const n of names) {
             const src = store[n];
             const info = src.startsWith('data:') ? `${src.length} bytes` : src.substring(0, 40);
             this.appendLine(`  ${n.padEnd(16)} ${info}`, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // IMGFREE "name" — remove image from store.
     cmdIMGFREE(param) {
         const name = this._resolveStrArg(param);
         if (name && this._imgStore()[name]) delete this._imgStore()[name];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // _splitArgs — split param string on commas outside quotes, evaluate string args.

@@ -1,5 +1,9 @@
 'use strict';
 
+import * as C from '../constants.js';
+import { LinePrinter, History }            from '../libraries.js';
+
+
 // ---------------------------------------------------------------------------
 // TerminalDriver  (core/drivers/terminal.js)
 //
@@ -14,7 +18,7 @@
 // Everything else — colours, cursor state, cols/rows, the DOM — lives here.
 // ---------------------------------------------------------------------------
 
-class TerminalDriver {
+export class TerminalDriver {
 
     constructor(host, id, width, height, type, initText, cols, rows, initCmd, fontSize, canvasCtx) {
         this._host = host;
@@ -176,7 +180,7 @@ class TerminalDriver {
     set _spr(v)            { this._host.__spr = v; }
 
     cmdLOCATE(params) {
-        if (!params) return CMD_ESYNTAX;
+        if (!params) return C.CMD_ESYNTAX;
         const row = params[0] != null ? Math.floor(Number(params[0])) : 0;
         const col = params[1] != null ? Math.floor(Number(params[1])) : 0;
 
@@ -184,7 +188,7 @@ class TerminalDriver {
 
         this._curRow = Math.max(0, Math.min(row, this.rows - 1));
         this._curCol = Math.max(0, Math.min(col, this.cols - 1));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // _screenActivate — switch to fixed screen buffer mode.
@@ -867,7 +871,7 @@ class TerminalDriver {
                 cb(code);
                 return false;
             }
-            this.assign_(ASS_NUMBER, this.input_var, code);
+            this.assign_(C.ASS_NUMBER, this.input_var, code);
             this.tick(1);
             return false;
         }
@@ -1334,7 +1338,7 @@ class TerminalDriver {
                         const m = document.querySelector('script[src*="kernel.js"]');
                         if (m) { const v = m.src.match(/v=(\d+)/); if (v) return v[1]; }
                     } catch(e) {}
-                    return '1781393858';
+                    return '1781431905';
                 })();
                 this.init_text    = [
                     'The Online Operating System', 1,

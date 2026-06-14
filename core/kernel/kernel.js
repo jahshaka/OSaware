@@ -1,5 +1,7 @@
 'use strict';
 
+import { ProcessMemory } from './process_memory.js';
+
 // ---------------------------------------------------------------------------
 // Kernel  (core/kernel/kernel.js)
 //
@@ -22,7 +24,7 @@
 // variables, or drivers. It only knows about processes, timers, and the bus.
 // ---------------------------------------------------------------------------
 
-class Kernel {
+export class Kernel {
 
     constructor(bus) {
         // The IPC syscall bus

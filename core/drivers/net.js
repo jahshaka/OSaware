@@ -1,4 +1,6 @@
 'use strict';
+import * as C from '../constants.js';
+
 
 // ---------------------------------------------------------------------------
 // NetDriver  (drivers/net.js)
@@ -7,7 +9,7 @@
 // Wraps WebSocket: WS.OPEN, WS.SEND, WS.CLOSE, WS.ONMSG, WS.CLEAR, WS.STATUS.
 // ---------------------------------------------------------------------------
 
-class NetDriver {
+export class NetDriver {
 
     constructor(host) {
         this._host     = host;
@@ -54,7 +56,7 @@ class NetDriver {
 
     cmdWS_OPEN(param) {
         const url = this._resolveStrArg(param);
-        if (!url) return CMD_ESYNTAX;
+        if (!url) return C.CMD_ESYNTAX;
         // Close existing connection
         if (this._ws) { try { this._ws.close(); } catch(e) {} this._ws = null; }
         this._wsStatus = 1;  // connecting
@@ -94,34 +96,34 @@ class NetDriver {
             this.appendLine('WS ERROR: ' + e.message, 1);
             this._wsResume();
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWS_SEND(param) {
         const msg = this._resolveStrArg(param);
         if (!this._ws || this._wsStatus !== 2) {
             this.appendLine('WS ERROR: not connected', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         try { this._ws.send(msg); } catch(e) { this.appendLine('WS SEND ERROR: ' + e.message, 1); }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWS_CLOSE() {
         if (this._ws) { try { this._ws.close(); } catch(e) {} this._ws = null; }
         this._wsStatus = 0;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWS_CLEAR() {
         this._wsQueue = [];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWS_ONMSG(param) {
-        const lbl = Number(this.evalCalc(this.trim(String(param || '-1')), ASS_NUMBER));
+        const lbl = Number(this.evalCalc(this.trim(String(param || '-1')), C.ASS_NUMBER));
         this._wsOnMsg = lbl;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // WS.RECV$ — used as a string function in lookup_, see compiler.js

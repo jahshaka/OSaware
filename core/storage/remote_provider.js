@@ -61,7 +61,7 @@
 //    the rest of the session works.
 // ---------------------------------------------------------------------------
 
-class RemoteStorageProvider {
+export class RemoteStorageProvider {
 
     // No constructor args — the backend knows who you are from the
     // session cookie that the browser sends automatically. If the

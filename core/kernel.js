@@ -1,11 +1,33 @@
 'use strict';
 
+import * as C from './constants.js';
+import * as THREE             from 'three';
+import { KernelBus }          from './kernel/bus.js';
+import { ProcessMemory }      from './kernel/process_memory.js';
+import { Kernel }             from './kernel/kernel.js';
+import { LocalStorageProvider }       from './storage/local_provider.js';
+import { MockRemoteStorageProvider }  from './storage/mock_remote_provider.js';
+import { RemoteStorageProvider }      from './storage/remote_provider.js';
+import { AuthService }                from './auth/auth_service.js';
+import { VirtualFs }                  from './vfs.js';
+import { LinePrinter, History }       from './libraries.js';
+import { TerminalDriver }    from './drivers/terminal.js';
+import { GL3DDriver }        from './drivers/gl3d.js';
+import { GfxDriver }         from './drivers/gfx.js';
+import { AudioDriver }       from './drivers/audio.js';
+import { NetDriver }         from './drivers/net.js';
+import { WindowDriver }      from './drivers/window.js';
+import { WalletDriver }      from './drivers/wallet.js';
+import { WalletTokens }      from './drivers/wallet_tokens.js';
+import { ShellRuntime }      from './shell.js';
+
+
 // ---------------------------------------------------------------------------
 // OSAWARE Interpreter  (kernel.js)
 // Unified kernel — reverted from failed compiler split.
 // ---------------------------------------------------------------------------
 
-class Interpreter {
+export class Interpreter {
 
 
 
@@ -173,7 +195,7 @@ class Interpreter {
     // -----------------------------------------------------------------------
 
     _skipToNextLine() {
-        while (this.run_line < MAX_LINES && this.lines[this.run_line] === '') {
+        while (this.run_line < C.MAX_LINES && this.lines[this.run_line] === '') {
             this.run_line++;
         }
     }
@@ -227,12 +249,12 @@ class Interpreter {
     // COMMAND HANDLERS
     // -----------------------------------------------------------------------
 
-    cmdNULL()             { return CMD_OK; }
-    cmdEND()              { return CMD_END; }
+    cmdNULL()             { return C.CMD_OK; }
+    cmdEND()              { return C.CMD_END; }
 
     // EDIT <lineNo|label> — pull an existing line into the input for editing.
     cmdEDIT(params) {
-        if (!params || params[0] == null) return CMD_ESYNTAX;
+        if (!params || params[0] == null) return C.CMD_ESYNTAX;
 
         // Accept line number or label name (labels are case-sensitive — Model B)
         let lineNo = parseInt(params[0], 10);
@@ -242,10 +264,10 @@ class Interpreter {
             lineNo = (this._labels && this._labels[lbl]) ?? -1;
             if (lineNo < 0) {
                 this.appendLine('Label not found: ' + lbl, 1);
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
-        if (lineNo < 0 || lineNo >= MAX_LINES) return CMD_ESYNTAX;
+        if (lineNo < 0 || lineNo >= C.MAX_LINES) return C.CMD_ESYNTAX;
 
         const existing = (this.lines[lineNo] && this.lines[lineNo] !== '')
             ? this.lines[lineNo] : '';
@@ -259,51 +281,51 @@ class Interpreter {
 
         this.want_input     = 1;
         this.input_var      = '__EDIT__';
-        this.input_var_type = ASS_STRING;
+        this.input_var_type = C.ASS_STRING;
 
         this._redrawInputLine();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdSLEEP(params) {
-        if (!params) return CMD_ESYNTAX;
+        if (!params) return C.CMD_ESYNTAX;
         const ms = Number(params[0]);
         // Flush the DataTexture pixel buffer before sleeping so the
         // frame is visible immediately (e.g. Mandelbrot scanlines).
         if (this._gfx && this._gfx.dirty) this._gfxFlush();
         this.sleepy_time = ms <= 0 ? 1 : ms;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDELAY(params) {
         this.run_delay = (params && Number(params[0]) > 0) ? Number(params[0]) : 5;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDATA(params) {
         // When running, _scanData() pre-loads all DATA at RUN time.
         // Executing a DATA line at runtime is a no-op — data is already loaded.
         // data_count === -1 means direct/interactive mode, so still allow it there.
-        if (this.running && this.data_count >= 0) return CMD_OK;
+        if (this.running && this.data_count >= 0) return C.CMD_OK;
         if (this.data_count === -1 || !this.data) {
             this.data          = [];
             this.data_count    = 0;
             this.data_position = 0;
         }
-        if (!params) return CMD_ESYNTAX;
+        if (!params) return C.CMD_ESYNTAX;
         for (const p of params) {
             this.data.push(this.trim(p));
             this.data_count++;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDEF(params) {
-        if (!params || params.length === 0) return CMD_OK;
+        if (!params || params.length === 0) return C.CMD_OK;
         const raw = String(params);
 
         const eqPos = raw.indexOf('=');
-        if (eqPos <= 0) return CMD_ESYNTAX;
+        if (eqPos <= 0) return C.CMD_ESYNTAX;
 
         let before = raw.substring(0, eqPos);
         let after  = raw.substring(eqPos + 1);
@@ -319,16 +341,16 @@ class Interpreter {
         const re = new RegExp(`(?<![A-Za-z0-9])${escapedToken}(?![A-Za-z0-9])`, 'g');
         after = after.replace(re, 'token');
 
-        this.assign_(ASS_FUNCTION, before, after);
-        return CMD_OK;
+        this.assign_(C.ASS_FUNCTION, before, after);
+        return C.CMD_OK;
     }
 
     cmdREAD(params) {
-        if (!params) return CMD_ESYNTAX;
-        if (!this.data || this.data.length <= this.data_position) return CMD_EDATA;
+        if (!params) return C.CMD_ESYNTAX;
+        if (!this.data || this.data.length <= this.data_position) return C.CMD_EDATA;
 
         for (const varName of params) {
-            if (this.data_position >= this.data.length) return CMD_EDATA;
+            if (this.data_position >= this.data.length) return C.CMD_EDATA;
             let val = this.data[this.data_position];
             if (String(val).startsWith('"') && String(val).endsWith('"')) {
                 val = String(val).slice(1, -1);
@@ -336,7 +358,7 @@ class Interpreter {
             this.assign(varName, val);
             this.data_position++;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 
@@ -396,7 +418,7 @@ class Interpreter {
     help(p)              { return this._shell.help(p); }
 
     cmdGOSUB(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         this.gosub_level++;
         this.gosubs[this.gosub_level] = this.run_line + 1;
         const t = this._resolveLabel(param);
@@ -410,12 +432,12 @@ class Interpreter {
             this.gosub_level--;
             return ret;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdGOTO(param) {
         const target = this._resolveLabel(param);
-        if (!this.running && !this._inBatch) { this._gotoLine(target); return CMD_OK; }
+        if (!this.running && !this._inBatch) { this._gotoLine(target); return C.CMD_OK; }
 
         // If jumping forward past a FOR/NEXT block, decrement for_level.
         if (target > -1 && this.for_level > -1) {
@@ -432,7 +454,7 @@ class Interpreter {
 
     cmdPRINT(param) {
         this.print(param || '\n', 0);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // FIX: was referencing undefined `param` instead of `params[0]`.
@@ -440,12 +462,12 @@ class Interpreter {
         if (params && params.length > 0) {
             this.print(params[0] || '\n', 0);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLPRINT(param) {
         this.print(param || '\n', 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdINPUT(params) {
@@ -462,11 +484,11 @@ class Interpreter {
             sInput = params[1];
         }
         this.input_var      = sInput;
-        this.input_var_type = sInput.endsWith('$') ? ASS_STRING : ASS_NUMBER;
+        this.input_var_type = sInput.endsWith('$') ? C.ASS_STRING : C.ASS_NUMBER;
         this.char_index     = -1;
         this._markInputStart();
         this.blink();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdBREAK() {
@@ -477,7 +499,7 @@ class Interpreter {
                 frame.matched  = true;
                 frame.skipping = true;
                 frame.broken   = true;
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
         // FOR loop break — force loop variable past end to exit on next NEXT
@@ -485,7 +507,7 @@ class Interpreter {
             this.fors[this.for_level][4] = this.fors[this.for_level][2] +
                 (this.fors[this.for_level][5] > 0 ? 1 : -1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdNEXT(params) {
@@ -495,7 +517,7 @@ class Interpreter {
         for (let i = 0; i < params.length; i++) {
             if (this.for_level > -1) {
                 this.fors[this.for_level][4] += this.fors[this.for_level][5];
-                this.assign_(ASS_NUMBER, this.fors[this.for_level][0], this.fors[this.for_level][4]);
+                this.assign_(C.ASS_NUMBER, this.fors[this.for_level][0], this.fors[this.for_level][4]);
 
                 const step    = this.fors[this.for_level][5];
                 const cur     = this.fors[this.for_level][4];
@@ -511,28 +533,28 @@ class Interpreter {
                 }
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdFOR(line) {
         const parts = this.extractForParts(line);
-        if (!parts) return CMD_OK;
+        if (!parts) return C.CMD_OK;
 
         const forVar = parts[0];
-        const iStart = Number(this.evalCalc(parts[1], ASS_NUMBER));
-        const iEnd   = Number(this.evalCalc(parts[2], ASS_NUMBER));
-        const iStep  = parts.length > 3 ? Number(this.evalCalc(parts[3], ASS_NUMBER)) : 1;
+        const iStart = Number(this.evalCalc(parts[1], C.ASS_NUMBER));
+        const iEnd   = Number(this.evalCalc(parts[2], C.ASS_NUMBER));
+        const iStep  = parts.length > 3 ? Number(this.evalCalc(parts[3], C.ASS_NUMBER)) : 1;
 
         // Already in this loop? Skip re-entry.
-        if (this.for_level > -1 && this.for_var === forVar) return CMD_OK;
+        if (this.for_level > -1 && this.for_var === forVar) return C.CMD_OK;
 
         this.for_level++;
         if (forVar !== '') {
             this.for_var = forVar;
             this.fors[this.for_level] = [forVar, iStart, iEnd, this.run_line, iStart, iStep];
-            this.assign_(ASS_NUMBER, forVar, iStart);
+            this.assign_(C.ASS_NUMBER, forVar, iStart);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdIF(line) {
@@ -560,16 +582,16 @@ class Interpreter {
                     const result    = this.checkCondition(condition);
                     this._if_stack.push({ done: result, skipping: !result });
                 }
-                return CMD_OK;
+                return C.CMD_OK;
             }
         }
 
         // Single-line IF inside a skipping block — don't execute either branch.
-        if (outerSkipping) return CMD_OK;
+        if (outerSkipping) return C.CMD_OK;
 
         // Single-line IF — original behaviour.
         const parts = this.extractIfParts(line);
-        if (!parts) return CMD_OK;
+        if (!parts) return C.CMD_OK;
 
         const condition  = parts[0];
         const thenBranch = parts[1];
@@ -582,7 +604,7 @@ class Interpreter {
             this.if_line = elseBranch;
             if (!this.running) this.tick(1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Graphics commands
@@ -655,70 +677,70 @@ class Interpreter {
     cmdWAVE(p)                 { return this.kernel.post({syscall:'sound.wave',param:p}); }
 
     cmdPOKE(params)  {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         this._memory[Number(params[0]) & 0xFFFF] = Number(params[1]) & 0xFF;
-        return CMD_OK;
+        return C.CMD_OK;
     }
     cmdPOKEW(params) {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         const a = Number(params[0]) & 0xFFFF, v = Number(params[1]) & 0xFFFF;
         this._memory[a] = v & 0xFF; this._memory[(a+1)&0xFFFF] = (v>>8)&0xFF;
-        return CMD_OK;
+        return C.CMD_OK;
     }
     cmdPOKEL(params) {
-        if (!params || params.length < 2) return CMD_ESYNTAX;
+        if (!params || params.length < 2) return C.CMD_ESYNTAX;
         const a = Number(params[0]) & 0xFFFF, v = Number(params[1]) >>> 0;
         this._memory[a]=(v)&0xFF; this._memory[(a+1)&0xFFFF]=(v>>8)&0xFF;
         this._memory[(a+2)&0xFFFF]=(v>>16)&0xFF; this._memory[(a+3)&0xFFFF]=(v>>24)&0xFF;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdOPTIONBASE(params) {
         const n = params && params[0] != null ? Number(params[0]) : -1;
-        if (n !== 0 && n !== 1) return CMD_ESYNTAX;
+        if (n !== 0 && n !== 1) return C.CMD_ESYNTAX;
         this._optionBase = n;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWIDTH(params) {
         this._printWidth = (!params || params[0] == null) ? 0 : Number(params[0]);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLSET(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const eq = param.indexOf('=');
-        if (eq < 0) return CMD_ESYNTAX;
+        if (eq < 0) return C.CMD_ESYNTAX;
         const vn  = this.trim(param.substring(0, eq));
-        const val = String(this.getValue(param.substring(eq+1).trim(), 0, param.length, ASS_STRING));
-        const cur = String(this.lookup_(ASS_STRING, vn) || '');
+        const val = String(this.getValue(param.substring(eq+1).trim(), 0, param.length, C.ASS_STRING));
+        const cur = String(this.lookup_(C.ASS_STRING, vn) || '');
         const w   = Math.max(cur.length, val.length);
-        this.assign_(ASS_STRING, vn, val.padEnd(w).substring(0, w));
-        return CMD_OK;
+        this.assign_(C.ASS_STRING, vn, val.padEnd(w).substring(0, w));
+        return C.CMD_OK;
     }
     cmdRSET(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const eq = param.indexOf('=');
-        if (eq < 0) return CMD_ESYNTAX;
+        if (eq < 0) return C.CMD_ESYNTAX;
         const vn  = this.trim(param.substring(0, eq));
-        const val = String(this.getValue(param.substring(eq+1).trim(), 0, param.length, ASS_STRING));
-        const cur = String(this.lookup_(ASS_STRING, vn) || '');
+        const val = String(this.getValue(param.substring(eq+1).trim(), 0, param.length, C.ASS_STRING));
+        const cur = String(this.lookup_(C.ASS_STRING, vn) || '');
         const w   = Math.max(cur.length, val.length);
-        this.assign_(ASS_STRING, vn, val.padStart(w).substring(0, w));
-        return CMD_OK;
+        this.assign_(C.ASS_STRING, vn, val.padStart(w).substring(0, w));
+        return C.CMD_OK;
     }
 
     cmdPRINTUSING(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const semi = param.indexOf(';');
-        if (semi < 0) return CMD_ESYNTAX;
+        if (semi < 0) return C.CMD_ESYNTAX;
         let fmt = this.trim(param.substring(0, semi));
         if (fmt.startsWith('"') && fmt.endsWith('"')) fmt = fmt.slice(1, -1);
         else fmt = String(this.lookup(fmt));
         const rest = param.substring(semi + 1);
         const vals = rest.split(';').map(t => {
             const s = this.trim(t);
-            return this.getValue(s, 0, s.length, ASS_ANY);
+            return this.getValue(s, 0, s.length, C.ASS_ANY);
         });
         let vi = 0;
         let out = fmt
@@ -733,7 +755,7 @@ class Interpreter {
                 return s.padStart(m.length).substring(Math.max(0, s.length - m.length));
             });
         this.appendLine(out, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _scanData() {
@@ -837,7 +859,7 @@ class Interpreter {
         }
     }
 
-    cmdDECLARE(param) { return CMD_OK; }  // forward decl — no-op
+    cmdDECLARE(param) { return C.CMD_OK; }  // forward decl — no-op
 
     // -----------------------------------------------------------------------
     // OOP — class registry. Scanned at run() time alongside _scanSubs.
@@ -1025,12 +1047,12 @@ class Interpreter {
     // CLASS Name [INHERITS Parent]  — during normal execution, jump past
     // the class body. Class metadata is already registered by _scanClasses.
     cmdCLASS(param) {
-        if (!this._classes) return CMD_OK;
+        if (!this._classes) return C.CMD_OK;
         const raw = String(param || '').trim();
         const sp  = raw.match(/\s+INHERITS\s+/i);
         const name = (sp ? raw.substring(0, raw.search(/\s+INHERITS\s+/i)) : raw).trim();
         const cls  = this._classes[name.toUpperCase()];
-        if (!cls) return CMD_OK;
+        if (!cls) return C.CMD_OK;
         // Jump to the line AFTER END CLASS.
         const endIdx = cls.endLine;
         const sorted = [...this.lines_assigned].sort((a, b) => a - b);
@@ -1039,10 +1061,10 @@ class Interpreter {
                 return sorted[i + 1];
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
-    cmdENDCLASS() { return CMD_OK; }     // metadata, no-op at run-time
+    cmdENDCLASS() { return C.CMD_OK; }     // metadata, no-op at run-time
 
     // -----------------------------------------------------------------------
     // OOP — object instance store
@@ -1201,7 +1223,7 @@ class Interpreter {
     // Must appear inside a SUB/FUNCTION body.
     // -----------------------------------------------------------------------
     cmdSHARED(param) {
-        if (!param || this._sub_stack.length === 0) return CMD_OK;
+        if (!param || this._sub_stack.length === 0) return C.CMD_OK;
         const frame = this._sub_stack[this._sub_stack.length - 1];
         // SHARED has two valid uses, both supported via this hybrid lookup:
         //   1) Inter-SUB state passing: caller writes a var, then CALLs the
@@ -1240,7 +1262,7 @@ class Interpreter {
                 this.variables_arr_strings.set(vn, arrStrVal);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // -----------------------------------------------------------------------
@@ -1248,7 +1270,7 @@ class Interpreter {
     // (their values persist between calls)
     // -----------------------------------------------------------------------
     cmdSTATIC(param) {
-        if (!param || this._sub_stack.length === 0) return CMD_OK;
+        if (!param || this._sub_stack.length === 0) return C.CMD_OK;
         const frame   = this._sub_stack[this._sub_stack.length - 1];
         const subKey  = frame.subName;
         for (const v of param.split(',')) {
@@ -1262,7 +1284,7 @@ class Interpreter {
                 else this.variables_numbers.set(vn, stored);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // -----------------------------------------------------------------------
@@ -1275,7 +1297,7 @@ class Interpreter {
     //   - ALL-STATIC subs restore their saved local state
     // -----------------------------------------------------------------------
     cmdCALL(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const raw = this.trim(param);
         // OOP: CALL obj.method(args) — dispatch on the object's vtable
         // (or MYBASE.method which skips OVERRIDES in the current class).
@@ -1298,12 +1320,12 @@ class Interpreter {
                     if (v && this._oopObjects.has(Number(v))) isOop = true;
                 }
             } else if (!isOop && arrayRecv && this._oopObjects) {
-                const h = Number(this.evalCalc(recv, ASS_NUMBER, 0)) || 0;
+                const h = Number(this.evalCalc(recv, C.ASS_NUMBER, 0)) || 0;
                 if (h && this._oopObjects.has(h)) isOop = true;
             }
             if (isOop) {
-                this.evalCalc(raw, ASS_NUMBER, 0);
-                return CMD_OK;
+                this.evalCalc(raw, C.ASS_NUMBER, 0);
+                return C.CMD_OK;
             }
             // else: fall through and let standard CALL try (probably errors,
             // but matches pre-OOP behaviour for non-OOP dotted identifiers).
@@ -1321,7 +1343,7 @@ class Interpreter {
         }
 
         const sub = this._subs[subName];
-        if (!sub) { this.appendLine('SUB NOT FOUND: ' + subName, 1); return CMD_ESYNTAX; }
+        if (!sub) { this.appendLine('SUB NOT FOUND: ' + subName, 1); return C.CMD_ESYNTAX; }
 
         // Parse arguments — detect pass-by-value (wrapped in parens)
         const argTokens = argStr ? this._splitArgsParen(argStr) : [];
@@ -1333,7 +1355,7 @@ class Interpreter {
             const isByVal = t.startsWith('(') && t.endsWith(')');
             if (isByVal) {
                 byRef.push(null);
-                byVal.push(this.evalCalc(t.slice(1,-1), ASS_ANY));
+                byVal.push(this.evalCalc(t.slice(1,-1), C.ASS_ANY));
             } else {
                 // Pass by reference — store the caller's variable name in original case
                 // so writeback at _returnFromSub finds the case-sensitive caller var.
@@ -1429,21 +1451,21 @@ class Interpreter {
         // lifecycle and will pop via _exitMethodFrame. Don't double-pop.
         if (this._sub_stack && this._sub_stack.length > 0 &&
             this._sub_stack[this._sub_stack.length - 1].isMethod) {
-            return CMD_OK;
+            return C.CMD_OK;
         }
         return this._returnFromSub();
     }
     cmdENDFUNCTION() {
         if (this._sub_stack && this._sub_stack.length > 0 &&
             this._sub_stack[this._sub_stack.length - 1].isMethod) {
-            return CMD_OK;
+            return C.CMD_OK;
         }
         return this._returnFromSub();
     }
     cmdEXITSUB()     { return this._returnFromSub(); }
 
     _returnFromSub() {
-        if (this._sub_stack.length === 0) return CMD_OK;
+        if (this._sub_stack.length === 0) return C.CMD_OK;
         const frame = this._sub_stack.pop();
         const { subName, byRef, paramNames, savedNums, savedStrs,
                 savedArrNums, savedArrStrs, shared, explicitStatics, isAllStatic } = frame;
@@ -1557,7 +1579,7 @@ class Interpreter {
     cmdELSEIF(line) {
         // If the current block was already satisfied, skip through to END IF.
         if (this._if_stack.length === 0) {
-            this.appendLine('ELSEIF WITHOUT IF', 1); return CMD_ESYNTAX;
+            this.appendLine('ELSEIF WITHOUT IF', 1); return C.CMD_ESYNTAX;
         }
         const frame = this._if_stack[this._if_stack.length - 1];
         if (frame.done) {
@@ -1573,19 +1595,19 @@ class Interpreter {
                 frame.skipping = true;
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdENDIF() {
         if (this._if_stack.length > 0) this._if_stack.pop();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ------------------------------------------------------------------
     // WHILE expr / WEND
     // ------------------------------------------------------------------
     cmdWHILE(expr) {
-        if (!expr || !expr.trim()) return CMD_ESYNTAX;
+        if (!expr || !expr.trim()) return C.CMD_ESYNTAX;
         if (this.checkCondition(expr.trim())) {
             // Push the loop start so WEND knows where to jump back.
             this._while_stack.push({ line: this.run_line, expr: expr.trim() });
@@ -1593,7 +1615,7 @@ class Interpreter {
             // Skip forward to matching WEND.
             let depth = 1;
             let i = this.run_line + 1;
-            while (i < MAX_LINES && depth > 0) {
+            while (i < C.MAX_LINES && depth > 0) {
                 const l = (this.lines[i] || '').trim().toUpperCase();
                 if (l.startsWith('WHILE')) depth++;
                 if (l.startsWith('WEND'))  depth--;
@@ -1601,12 +1623,12 @@ class Interpreter {
             }
             this.run_line = i - 1;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdWEND() {
         if (this._while_stack.length === 0) {
-            this.appendLine('WEND WITHOUT WHILE', 1); return CMD_ESYNTAX;
+            this.appendLine('WEND WITHOUT WHILE', 1); return C.CMD_ESYNTAX;
         }
         const frame = this._while_stack[this._while_stack.length - 1];
         if (this.checkCondition(frame.expr)) {
@@ -1614,34 +1636,34 @@ class Interpreter {
         } else {
             this._while_stack.pop();
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ------------------------------------------------------------------
     // SELECT CASE / CASE / CASE ELSE / END SELECT
     // ------------------------------------------------------------------
     cmdSELECTCASE(expr) {
-        if (!expr || !expr.trim()) return CMD_ESYNTAX;
-        const val = this.evalCalc(expr.trim(), ASS_ANY);
+        if (!expr || !expr.trim()) return C.CMD_ESYNTAX;
+        const val = this.evalCalc(expr.trim(), C.ASS_ANY);
         this._select_stack.push({ val, matched: false, skipping: false, broken: false, switchMode: false });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdCASE(param) {
         if (this._select_stack.length === 0) {
-            this.appendLine('CASE WITHOUT SELECT', 1); return CMD_ESYNTAX;
+            this.appendLine('CASE WITHOUT SELECT', 1); return C.CMD_ESYNTAX;
         }
         const frame = this._select_stack[this._select_stack.length - 1];
         if (frame.matched) {
             if (!frame.switchMode) {
                 // SELECT CASE style: always skip remaining cases once matched.
-                frame.skipping = true; return CMD_OK;
+                frame.skipping = true; return C.CMD_OK;
             }
             // SWITCH style: skip if BREAK was seen, fall-through if not.
-            if (frame.broken) { frame.skipping = true; return CMD_OK; }
+            if (frame.broken) { frame.skipping = true; return C.CMD_OK; }
             // No BREAK yet — consecutive CASEs share body (fall-through).
             frame.skipping = false;
-            return CMD_OK;
+            return C.CMD_OK;
         }
         let p   = (param || '').trim();
         if (p.endsWith(':')) p = p.slice(0, -1).trim();  // allow CASE 1: syntax
@@ -1654,12 +1676,12 @@ class Interpreter {
             matched = this.checkCondition(String(fVal) + p.substring(3).trim());
         } else if (pUp.includes(' TO ')) {
             const toIdx = pUp.indexOf(' TO ');
-            const lo = this.evalCalc(p.substring(0, toIdx).trim(), ASS_ANY);
-            const hi = this.evalCalc(p.substring(toIdx + 4).trim(), ASS_ANY);
+            const lo = this.evalCalc(p.substring(0, toIdx).trim(), C.ASS_ANY);
+            const hi = this.evalCalc(p.substring(toIdx + 4).trim(), C.ASS_ANY);
             matched = fVal >= lo && fVal <= hi;
         } else {
             for (const part of p.split(',')) {
-                const v = this.evalCalc(part.trim(), ASS_ANY);
+                const v = this.evalCalc(part.trim(), C.ASS_ANY);
                 if (typeof fVal === 'string' ? fVal === String(v) : Number(fVal) === Number(v)) {
                     matched = true; break;
                 }
@@ -1667,12 +1689,12 @@ class Interpreter {
         }
         frame.matched  = matched ? true : frame.matched;
         frame.skipping = !matched;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdENDSELECT() {
         if (this._select_stack.length > 0) this._select_stack.pop();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // BREAK — used inside SWITCH/SELECT to stop executing further cases.
@@ -1684,10 +1706,10 @@ class Interpreter {
         expr = (expr || '').trim();
         // Strip outer parens: switch(x) -> x
         if (expr.startsWith('(') && expr.endsWith(')')) expr = expr.slice(1, -1).trim();
-        if (!expr) return CMD_ESYNTAX;
-        const val = this.evalCalc(expr, ASS_ANY);
+        if (!expr) return C.CMD_ESYNTAX;
+        const val = this.evalCalc(expr, C.ASS_ANY);
         this._select_stack.push({ val, matched: false, skipping: false, broken: false, switchMode: true });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // CASE x: — alias for CASE, strips trailing colon
@@ -1703,7 +1725,7 @@ class Interpreter {
     // ON n GOSUB line1, line2, ...
     // ------------------------------------------------------------------
     cmdONGOTO(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         // Detect ON n GOSUB vs ON n GOTO and dispatch correctly.
         const upper = param.toUpperCase();
         const isSub = upper.indexOf('GOSUB') >= 0;
@@ -1712,16 +1734,16 @@ class Interpreter {
     cmdONGOSUB(param) { return this._onBranch(param, true); }
 
     _onBranch(param, isSub) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         // param looks like: "X GOTO 100,200,300" or "X GOSUB 100,200,300"
         const upper = param.toUpperCase();
         const kw    = isSub ? 'GOSUB' : 'GOTO';
         const kwPos = upper.indexOf(kw);
-        if (kwPos < 0) return CMD_ESYNTAX;
+        if (kwPos < 0) return C.CMD_ESYNTAX;
         const nExpr = param.substring(0, kwPos).trim();
         const lines = param.substring(kwPos + kw.length).split(',').map(s => parseInt(s.trim(), 10));
-        const n     = Math.floor(Number(this.evalCalc(nExpr, ASS_NUMBER, 0)));
-        if (n < 1 || n > lines.length) return CMD_OK;  // out of range = fall through
+        const n     = Math.floor(Number(this.evalCalc(nExpr, C.ASS_NUMBER, 0)));
+        if (n < 1 || n > lines.length) return C.CMD_OK;  // out of range = fall through
         const target = lines[n - 1];
         if (isSub) {
             this.gosub_level++;
@@ -1734,14 +1756,14 @@ class Interpreter {
     // ON ERROR GOTO line  /  ON ERROR GOTO 0 (disable)
     // ------------------------------------------------------------------
     cmdONERROR(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const upper = param.trim().toUpperCase();
         if (upper.startsWith('GOTO')) {
             const targetStr = param.trim().substring(4).trim();
             const resolved  = this._resolveLabel(targetStr);
             this._error_trap_line = resolved >= 0 ? resolved : -1;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ------------------------------------------------------------------
@@ -1756,7 +1778,7 @@ class Interpreter {
             return this._error_resume_line;
         } else {
             const n = parseInt(p, 10);
-            return isNaN(n) ? CMD_OK : n;
+            return isNaN(n) ? C.CMD_OK : n;
         }
     }
 
@@ -1995,14 +2017,14 @@ class Interpreter {
         this.appendLine('BREAK AT ' + this.run_line, 1);
         this.appendLine(this.prompt, 0);
         this.blink();
-        return CMD_END;
+        return C.CMD_END;
     }
 
     // ------------------------------------------------------------------
     // LBOUND / UBOUND as commands (alias — they also work as functions)
     // ------------------------------------------------------------------
-    cmdLBOUND(params) { return CMD_OK; }
-    cmdUBOUND(params) { return CMD_OK; }
+    cmdLBOUND(params) { return C.CMD_OK; }
+    cmdUBOUND(params) { return C.CMD_OK; }
 
     // ------------------------------------------------------------------
     // RANDOMIZE TIMER shortcut (already handled in cmdRANDOMIZE,
@@ -2043,7 +2065,7 @@ class Interpreter {
                 this._fullscreenSavedState = undefined;
                 return this._applyFullscreen(target);
             }
-            return CMD_OK;
+            return C.CMD_OK;
         }
         return this._applyFullscreen(arg);
     }
@@ -2063,7 +2085,7 @@ class Interpreter {
         if (btn) btn.textContent = isFs ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
         // Only run the resize-pause dance if state actually changed.
         if (isFs !== wasFs) this._beginResizePause(true);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdOVERSCAN(param) {
@@ -2080,7 +2102,7 @@ class Interpreter {
         else                    { isOs = body.classList.toggle('overscan'); }
         if (btn) btn.textContent = isOs ? 'EXIT OVERSCAN' : 'OVERSCAN';
         this._beginResizePause(true);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // Pause the BASIC tick loop until the async _osaware_resize chain has
@@ -2103,7 +2125,7 @@ class Interpreter {
     cmdUI(param) {
         const arg = this.trim(String(param || '')).toUpperCase();
         const el = this.o;
-        if (!el) return CMD_OK;
+        if (!el) return C.CMD_OK;
         if (arg === 'OFF' || arg === '0') {
             el.style.opacity = '0';
             el.style.pointerEvents = 'none';
@@ -2111,7 +2133,7 @@ class Interpreter {
             el.style.opacity = '1';
             el.style.pointerEvents = '';
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // _glSyncCanvas — ensure canvas pixel dimensions match its CSS display size.
@@ -2139,14 +2161,14 @@ class Interpreter {
     cmdBEEP()                  { return this.kernel.post({syscall:'sound.beep'}); }
 
     cmdSWAP(params) {
-        if (!params || params[0] == null || params[1] == null) return CMD_ESYNTAX;
+        if (!params || params[0] == null || params[1] == null) return C.CMD_ESYNTAX;
         const nameA = this.trim(String(params[0]));
         const nameB = this.trim(String(params[1]));
         const valA  = this.lookup(nameA);
         const valB  = this.lookup(nameB);
         this.assign(nameA, valB);
         this.assign(nameB, valA);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdRANDOMIZE(params) {
@@ -2158,11 +2180,11 @@ class Interpreter {
             this.appendLine('Random number seed? ', 0);
             this.want_input     = 1;
             this.input_var      = '__RANDOMIZE__';
-            this.input_var_type = ASS_NUMBER;
+            this.input_var_type = C.ASS_NUMBER;
             this.char_index     = -1;
             this.blink();
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _seededRandom() {
@@ -2172,25 +2194,25 @@ class Interpreter {
     }
 
     cmdWRITE(param) {
-        if (!param) { this.appendLine('', 1); return CMD_OK; }
+        if (!param) { this.appendLine('', 1); return C.CMD_OK; }
         const tokens = param.split(',');
         const out = tokens.map(tok => {
             tok = this.trim(tok);
-            const val = this.getValue(tok, 0, tok.length, ASS_ANY);
+            const val = this.getValue(tok, 0, tok.length, C.ASS_ANY);
             return (typeof val === 'string') ? '"' + val + '"' : String(val);
         }).join(',');
         this.appendLine(out, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdERASE(params) {
-        if (!params) return CMD_ESYNTAX;
+        if (!params) return C.CMD_ESYNTAX;
         for (const p of params) {
             const name = this.trim(String(p));
             this.variables_arr_numbers = this.variables_arr_numbers.filter(e => e[0] !== name);
             this.variables_arr_strings = this.variables_arr_strings.filter(e => e[0] !== name);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdCLEAR() {
@@ -2202,11 +2224,11 @@ class Interpreter {
         this.for_level       = -1;
         this.gosub_level     = -1;
         this.gosubs          = [];
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDELETE(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const raw  = this.trim(String(param));
         const dash = raw.indexOf('-');
         let s, f;
@@ -2216,12 +2238,12 @@ class Interpreter {
         } else {
             s = f = parseInt(raw, 10);
         }
-        if (isNaN(s) || isNaN(f)) return CMD_ESYNTAX;
+        if (isNaN(s) || isNaN(f)) return C.CMD_ESYNTAX;
         for (let i = s; i <= f; i++) {
             this.lines[i] = '';
             this.line_unassigned(i);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdRESTORE(params) {
@@ -2233,7 +2255,7 @@ class Interpreter {
             // first item that came from >= startLine by re-scanning line numbers.
             // Simpler approach: rebuild from startLine (fast, correct).
             const newData = [];
-            for (let i = startLine; i < MAX_LINES; i++) {
+            for (let i = startLine; i < C.MAX_LINES; i++) {
                 const line = this.lines[i];
                 if (line && line.toUpperCase().startsWith('DATA')) {
                     const p = this.findParameters(line.substring(4), 1, ',');
@@ -2248,18 +2270,18 @@ class Interpreter {
             this.data          = null;
             this.data_count    = -1;
             this.data_position = 0;
-            for (let i = startLine; i < MAX_LINES; i++) {
+            for (let i = startLine; i < C.MAX_LINES; i++) {
                 if (this.lines[i] && this.lines[i].toUpperCase().startsWith('DATA')) {
                     this.cmdDATA(this.findParameters(this.lines[i].substring(4), 1, ','));
                 }
             }
             this.data_position = 0;
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLINEINPUT(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         let sInput = this.trim(param);
         if (sInput.startsWith('"')) {
             const endQ = sInput.indexOf('"', 1);
@@ -2271,10 +2293,10 @@ class Interpreter {
         }
         this.want_input     = 1;
         this.input_var      = sInput;
-        this.input_var_type = ASS_STRING;
+        this.input_var_type = C.ASS_STRING;
         this.char_index     = -1;
         this.blink();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // =======================================================================
@@ -2720,8 +2742,8 @@ class Interpreter {
         const raw = this.trim(String(param || ''));
         // Split: first arg is id, rest is definition
         const commaPos = raw.indexOf(',');
-        if (commaPos < 0) return CMD_ESYNTAX;
-        const id  = Math.floor(Number(this.evalCalc(raw.substring(0, commaPos).trim(), ASS_NUMBER)));
+        if (commaPos < 0) return C.CMD_ESYNTAX;
+        const id  = Math.floor(Number(this.evalCalc(raw.substring(0, commaPos).trim(), C.ASS_NUMBER)));
         const rest = this.trim(raw.substring(commaPos + 1));
 
         const obj = this._objGet(id);
@@ -2732,7 +2754,7 @@ class Interpreter {
             const src = this._objGet(Math.floor(asNum));
             obj.pixels = src.pixels;
             obj.w = src.w; obj.h = src.h;
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Syntax 1: OBJECT.SHAPE id, "w,h,HEXDATA" or "imagename"
@@ -2750,13 +2772,13 @@ class Interpreter {
         if (!looksLikeHex || this._imgStore()[def]) {
             // Treat as image name — async load, pauses execution
             this._objShapeFromImage(obj, def);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         const parts = def.split(',');
-        if (parts.length < 3) return CMD_ESYNTAX;
+        if (parts.length < 3) return C.CMD_ESYNTAX;
         const w = parseInt(parts[0]), h = parseInt(parts[1]);
-        if (isNaN(w) || isNaN(h) || w < 1 || h < 1) return CMD_ESYNTAX;
+        if (isNaN(w) || isNaN(h) || w < 1 || h < 1) return C.CMD_ESYNTAX;
 
         const hex = parts[2];
         const pixels = [];
@@ -2771,7 +2793,7 @@ class Interpreter {
         }
         obj.pixels = pixels; obj.w = w; obj.h = h;
         this._activateGraphics();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.ON [id,...] / OBJECT.OFF [id,...]
@@ -2786,7 +2808,7 @@ class Interpreter {
             obj.on = on;
             if (on) this._objDraw(obj);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.X id, value  /  OBJECT.Y id, value  (set)
@@ -2795,12 +2817,12 @@ class Interpreter {
     cmdOBJECT_Y(param) { return this._objSetXY(param, 'y'); }
     _objSetXY(param, axis) {
         const [id, val] = this._objParseIdVal(param);
-        if (id === null) return CMD_ESYNTAX;
+        if (id === null) return C.CMD_ESYNTAX;
         const obj = this._objGet(id);
         this._objErase(obj);
         obj[axis] = val;
         if (obj.on) this._objDraw(obj);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.VX / OBJECT.VY — velocity
@@ -2817,46 +2839,46 @@ class Interpreter {
     // OBJECT.SCALE id, factor — integer upscale of sprite (e.g. 2 = 2x)
     cmdOBJECT_SCALE(param) {
         const [id, val] = this._objParseIdVal(param);
-        if (id === null) return CMD_ESYNTAX;
+        if (id === null) return C.CMD_ESYNTAX;
         let sc = Math.floor(Number(val));
         if (!isFinite(sc) || sc < 1) sc = 1;
         const obj = this._objGet(id);
         this._objErase(obj);
         obj.scale = sc;
         if (obj.on) this._objDraw(obj);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.FLIP id, axis — axis=0 horizontal, axis=1 vertical
     cmdOBJECT_FLIP(param) {
         const [id, val] = this._objParseIdVal(param);
-        if (id === null) return CMD_ESYNTAX;
+        if (id === null) return C.CMD_ESYNTAX;
         const axis = Math.floor(Number(val));
         const obj = this._objGet(id);
         if (axis === 0)      obj.flipH = !obj.flipH;
         else if (axis === 1) obj.flipV = !obj.flipV;
-        else return CMD_ESYNTAX;
+        else return C.CMD_ESYNTAX;
         if (obj.on) this._objDraw(obj);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.ROTATE id, degrees — set absolute rotation in degrees (0=none, 90=CW quarter-turn)
     cmdOBJECT_ROTATE(param) {
         const [id, val] = this._objParseIdVal(param);
-        if (id === null) return CMD_ESYNTAX;
+        if (id === null) return C.CMD_ESYNTAX;
         const deg = Number(val);
-        if (!isFinite(deg)) return CMD_ESYNTAX;
+        if (!isFinite(deg)) return C.CMD_ESYNTAX;
         const obj = this._objGet(id);
         obj.rotation = deg;
         if (obj.on) this._objDraw(obj);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     _objSetProp(param, prop) {
         const [id, val] = this._objParseIdVal(param);
-        if (id === null) return CMD_ESYNTAX;
+        if (id === null) return C.CMD_ESYNTAX;
         this._objGet(id)[prop] = val;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.START [id,...] — begin animation loop for objects with velocity
@@ -2866,7 +2888,7 @@ class Interpreter {
         for (const id of targets) this._objGet(id).on = true;
         this._activateGraphics();
         this._objStartAnim();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.STOP [id,...] — freeze objects (stop animation)
@@ -2881,12 +2903,12 @@ class Interpreter {
                 o.vx = 0; o.vy = 0; o.ax = 0; o.ay = 0;
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.CLOSE [id,...] — release objects
     cmdOBJECT_CLOSE(param) {
-        if (!this._objects) return CMD_OK;
+        if (!this._objects) return C.CMD_OK;
         const ids = this._objParseIds(param);
         const targets = ids.length > 0 ? ids : Object.keys(this._objects).map(Number);
         for (const id of targets) {
@@ -2904,63 +2926,63 @@ class Interpreter {
         }
         if (Object.keys(this._objects).length === 0) this._objStopAnim();
         if (this._spr) this._sprRender();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // OBJECT.HIT id [,MeMask] [,HitMask] — collision mask (simplified: just store)
     cmdOBJECT_HIT(param) {
         const parts = (param || '').split(',').map(p => this.trim(p));
-        if (!parts[0]) return CMD_ESYNTAX;
-        const id = Math.floor(Number(this.evalCalc(parts[0], ASS_NUMBER)));
+        if (!parts[0]) return C.CMD_ESYNTAX;
+        const id = Math.floor(Number(this.evalCalc(parts[0], C.ASS_NUMBER)));
         const obj = this._objGet(id);
-        obj.meMask  = parts[1] ? Number(this.evalCalc(parts[1], ASS_NUMBER)) : 0xFFFF;
-        obj.hitMask = parts[2] ? Number(this.evalCalc(parts[2], ASS_NUMBER)) : 0xFFFF;
-        return CMD_OK;
+        obj.meMask  = parts[1] ? Number(this.evalCalc(parts[1], C.ASS_NUMBER)) : 0xFFFF;
+        obj.hitMask = parts[2] ? Number(this.evalCalc(parts[2], C.ASS_NUMBER)) : 0xFFFF;
+        return C.CMD_OK;
     }
 
     // OBJECT.CLIP (x1,y1)-(x2,y2) — set clip rectangle (stored for future use)
     cmdOBJECT_CLIP(param) {
         // Parse "(x1,y1)-(x2,y2)"
         const m = String(param || '').match(/\(([^)]+)\)-\(([^)]+)\)/);
-        if (!m) return CMD_ESYNTAX;
-        const [x1, y1] = m[1].split(',').map(v => Number(this.evalCalc(this.trim(v), ASS_NUMBER)));
-        const [x2, y2] = m[2].split(',').map(v => Number(this.evalCalc(this.trim(v), ASS_NUMBER)));
+        if (!m) return C.CMD_ESYNTAX;
+        const [x1, y1] = m[1].split(',').map(v => Number(this.evalCalc(this.trim(v), C.ASS_NUMBER)));
+        const [x2, y2] = m[2].split(',').map(v => Number(this.evalCalc(this.trim(v), C.ASS_NUMBER)));
         this._objClip = { x1, y1, x2, y2 };
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // COLLISION ON/OFF/STOP
-    cmdCOLLISION_ON()   { this._collisionEnabled = true;  return CMD_OK; }
-    cmdCOLLISION_OFF()  { this._collisionEnabled = false; return CMD_OK; }
-    cmdCOLLISION_STOP() { this._collisionEnabled = false; return CMD_OK; }
+    cmdCOLLISION_ON()   { this._collisionEnabled = true;  return C.CMD_OK; }
+    cmdCOLLISION_OFF()  { this._collisionEnabled = false; return C.CMD_OK; }
+    cmdCOLLISION_STOP() { this._collisionEnabled = false; return C.CMD_OK; }
 
     // ON COLLISION GOSUB label — store the handler line
     cmdON_COLLISION(param) {
         const raw = this.trim(String(param || ''));
         const gosubIdx = raw.toUpperCase().indexOf('GOSUB');
-        if (gosubIdx < 0) return CMD_ESYNTAX;
+        if (gosubIdx < 0) return C.CMD_ESYNTAX;
         const target = this.trim(raw.substring(gosubIdx + 5));
         const resolved = this._resolveLabel(target);
         this._onCollisionLine = resolved >= 0 ? resolved : null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ON MOUSE GOSUB label — set the subroutine for mouse button events
     cmdON_MOUSE(param) {
         const raw = this.trim(String(param || ''));
         const gosubIdx = raw.toUpperCase().indexOf('GOSUB');
-        if (gosubIdx < 0) return CMD_ESYNTAX;
+        if (gosubIdx < 0) return C.CMD_ESYNTAX;
         const target = this.trim(raw.substring(gosubIdx + 5));
         const resolved = this._resolveLabel(target);
         this._mouseGosub = resolved >= 0 ? resolved : -1;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // ---- Helper parsers ----
     _objParseIds(param) {
         if (!param || !this.trim(param)) return [];
         return this.trim(String(param)).split(',')
-            .map(p => Math.floor(Number(this.evalCalc(this.trim(p), ASS_NUMBER))))
+            .map(p => Math.floor(Number(this.evalCalc(this.trim(p), C.ASS_NUMBER))))
             .filter(n => !isNaN(n) && n > 0);
     }
 
@@ -2968,8 +2990,8 @@ class Interpreter {
         const raw = this.trim(String(param || ''));
         const commaPos = raw.indexOf(',');
         if (commaPos < 0) return [null, null];
-        const id  = Math.floor(Number(this.evalCalc(raw.substring(0, commaPos).trim(), ASS_NUMBER)));
-        const val = Number(this.evalCalc(raw.substring(commaPos + 1).trim(), ASS_NUMBER));
+        const id  = Math.floor(Number(this.evalCalc(raw.substring(0, commaPos).trim(), C.ASS_NUMBER)));
+        const val = Number(this.evalCalc(raw.substring(commaPos + 1).trim(), C.ASS_NUMBER));
         return [id, val];
     }
 
@@ -3409,11 +3431,11 @@ class Interpreter {
     cmdGL_CHROME(p)            { return this.kernel.post({syscall:'gl.chrome',param:p}); }
 
     // Wallet (Stage 1) — forwarders to the WalletDriver.
-    cmdWALLETCONNECT()         { return this._walletDrv ? this._walletDrv.cmdWALLETCONNECT() : CMD_OK; }
-    cmdWALLETDISCONNECT()      { return this._walletDrv ? this._walletDrv.cmdWALLETDISCONNECT() : CMD_OK; }
-    cmdWALLETREFRESH()         { return this._walletDrv ? this._walletDrv.cmdWALLETREFRESH() : CMD_OK; }
-    cmdWALLETSWITCH(p)         { return this._walletDrv ? this._walletDrv.cmdWALLETSWITCH(p) : CMD_OK; }
-    cmdWALLETSHOWZERO(p)       { return this._walletDrv ? this._walletDrv.cmdWALLETSHOWZERO(p) : CMD_OK; }
+    cmdWALLETCONNECT()         { return this._walletDrv ? this._walletDrv.cmdWALLETCONNECT() : C.CMD_OK; }
+    cmdWALLETDISCONNECT()      { return this._walletDrv ? this._walletDrv.cmdWALLETDISCONNECT() : C.CMD_OK; }
+    cmdWALLETREFRESH()         { return this._walletDrv ? this._walletDrv.cmdWALLETREFRESH() : C.CMD_OK; }
+    cmdWALLETSWITCH(p)         { return this._walletDrv ? this._walletDrv.cmdWALLETSWITCH(p) : C.CMD_OK; }
+    cmdWALLETSHOWZERO(p)       { return this._walletDrv ? this._walletDrv.cmdWALLETSHOWZERO(p) : C.CMD_OK; }
 
 
     // AIKEY — store the Anthropic API key for this session.
@@ -3422,17 +3444,17 @@ class Interpreter {
         if (raw.startsWith('"') && raw.endsWith('"')) {
             this.ai_key = raw.slice(1, -1);
             this.appendLine('API key set.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         // No key inline — prompt securely with password masking.
         this.appendLine('Enter Anthropic API key: ', 0);
         this.want_input     = 1;
         this.want_password  = 1;
         this.input_var      = '__AIKEY__';
-        this.input_var_type = ASS_STRING;
+        this.input_var_type = C.ASS_STRING;
         this.char_index     = -1;
         this.blink();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // AICLEAR        — wipe conversation history (start a fresh context).
@@ -3450,7 +3472,7 @@ class Interpreter {
         } else {
             this.appendLine('AI conversation cleared.', 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // AISYSTEM "text"   — set the system prompt (your persona / raw context / data the model
@@ -3465,16 +3487,16 @@ class Interpreter {
         if (raw === '') {
             const cur = this.ai_system || '(default — you are an AI assistant inside a BASIC terminal)';
             this.appendLine('AI system prompt: ' + cur, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         if (raw === '""' || raw === "''") {
             this.ai_system = '';
             this.appendLine('AI system prompt reset to default.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         if (raw.startsWith('@')) {
             const fn = this.trim(raw.substring(1)).replace(/^["']|["']$/g, '');
-            if (!fn) return CMD_ESYNTAX;
+            if (!fn) return C.CMD_ESYNTAX;
             const resumePrompt = () => {
                 if (this.running) this._scheduleNextTick();
                 else { this.appendLine(this.prompt, 0); this.blink(); }
@@ -3494,11 +3516,11 @@ class Interpreter {
                     this.appendLine('AISYSTEM: could not read "' + fn + '"', 1);
                     resumePrompt();
                 });
-                return CMD_OK;
+                return C.CMD_OK;
             }
-            if (!result || typeof result === 'number') { this.appendLine('AISYSTEM: could not read "' + fn + '"', 1); return CMD_OK; }
+            if (!result || typeof result === 'number') { this.appendLine('AISYSTEM: could not read "' + fn + '"', 1); return C.CMD_OK; }
             this._aiSystemFromFile(result, fn);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         let text;
         if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
@@ -3508,7 +3530,7 @@ class Interpreter {
         }
         this.ai_system = text;
         this.appendLine('AI system prompt set (' + text.length + ' chars).', 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // _aiSystemFromFile — set ai_system from a loaded VFS line array (joins the non-empty
@@ -3525,7 +3547,7 @@ class Interpreter {
     // AIMODEL        — show the current model.
     cmdAIMODEL(param) {
         const raw = this.trim(String(param || '')).replace(/^["']|["']$/g, '');
-        if (raw === '') { this.appendLine('AI model: ' + (this.ai_model || this._aiDefaultModel), 1); return CMD_OK; }
+        if (raw === '') { this.appendLine('AI model: ' + (this.ai_model || this._aiDefaultModel), 1); return C.CMD_OK; }
         const map = {
             FAST:    this._aiDefaultModel, HAIKU:  this._aiDefaultModel, DEFAULT: '',
             SMART:   'claude-sonnet-4-6',  SONNET: 'claude-sonnet-4-6',
@@ -3534,31 +3556,31 @@ class Interpreter {
         const u = raw.toUpperCase();
         this.ai_model = (u in map) ? map[u] : raw;
         this.appendLine('AI model: ' + (this.ai_model || this._aiDefaultModel), 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // AITEMP n   — sampling temperature 0..1 (0 = deterministic, best for pulling data).
     // AITEMP     — show it.  Out-of-range value resets to the API default.
     cmdAITEMP(param) {
         const raw = this.trim(String(param || ''));
-        if (raw === '') { this.appendLine('AI temperature: ' + (this.ai_temp == null ? '(API default)' : this.ai_temp), 1); return CMD_OK; }
+        if (raw === '') { this.appendLine('AI temperature: ' + (this.ai_temp == null ? '(API default)' : this.ai_temp), 1); return C.CMD_OK; }
         const n = parseFloat(raw);
-        if (isNaN(n) || n < 0 || n > 1) { this.ai_temp = null; this.appendLine('AI temperature reset to API default.', 1); return CMD_OK; }
+        if (isNaN(n) || n < 0 || n > 1) { this.ai_temp = null; this.appendLine('AI temperature reset to API default.', 1); return C.CMD_OK; }
         this.ai_temp = n;
         this.appendLine('AI temperature: ' + n, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // AITOKENS n  — max output tokens (1..8192).  AITOKENS shows it; 0 or bad value resets to 1024.
     cmdAITOKENS(param) {
         const raw = this.trim(String(param || ''));
-        if (raw === '') { this.appendLine('AI max tokens: ' + (this.ai_tokens || 1024), 1); return CMD_OK; }
+        if (raw === '') { this.appendLine('AI max tokens: ' + (this.ai_tokens || 1024), 1); return C.CMD_OK; }
         let n = parseInt(raw, 10);
-        if (isNaN(n) || n < 1) { this.ai_tokens = 0; this.appendLine('AI max tokens reset to 1024.', 1); return CMD_OK; }
+        if (isNaN(n) || n < 1) { this.ai_tokens = 0; this.appendLine('AI max tokens reset to 1024.', 1); return C.CMD_OK; }
         if (n > 8192) n = 8192;
         this.ai_tokens = n;
         this.appendLine('AI max tokens: ' + n, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // AIWEB ON | OFF | (no arg) — when ON, AI/AINUM requests carry Anthropic's server-side
@@ -3566,10 +3588,10 @@ class Interpreter {
     // OFF by default (web search adds latency and a per-search cost). AICLEAR ALL resets it.
     cmdAIWEB(param) {
         const arg = this.trim(String(param || '')).toUpperCase();
-        if (arg === '')      { this.appendLine('AI web search: ' + (this.ai_web ? 'ON' : 'OFF'), 1); return CMD_OK; }
-        if (arg === 'ON'  || arg === '1') { this.ai_web = true;  this.appendLine('AI web search ON — Claude can search the web to answer.', 1); return CMD_OK; }
-        if (arg === 'OFF' || arg === '0') { this.ai_web = false; this.appendLine('AI web search OFF.', 1); return CMD_OK; }
-        return CMD_ESYNTAX;
+        if (arg === '')      { this.appendLine('AI web search: ' + (this.ai_web ? 'ON' : 'OFF'), 1); return C.CMD_OK; }
+        if (arg === 'ON'  || arg === '1') { this.ai_web = true;  this.appendLine('AI web search ON — Claude can search the web to answer.', 1); return C.CMD_OK; }
+        if (arg === 'OFF' || arg === '0') { this.ai_web = false; this.appendLine('AI web search OFF.', 1); return C.CMD_OK; }
+        return C.CMD_ESYNTAX;
     }
 
     // WEBGET url$, RESULT$ — HTTP GET from the open web (https assumed if no scheme).
@@ -3581,7 +3603,7 @@ class Interpreter {
     // headers will work (most public JSON APIs do; many ordinary web pages do not).
     cmdWEBGET(param) {
         const raw = this.trim(String(param || ''));
-        if (!raw) return CMD_ESYNTAX;
+        if (!raw) return C.CMD_ESYNTAX;
         // split:  url , RESULT$    (url may be quoted or a variable)
         let urlPart, resVar = null;
         if (raw.startsWith('"')) {
@@ -3596,16 +3618,16 @@ class Interpreter {
             if (c > 0) { urlPart = this.trim(raw.substring(0, c)); resVar = this.trim(raw.substring(c + 1)); }
             else urlPart = raw;
         }
-        if (!resVar) { this.appendLine('WEBGET needs a result variable:  WEBGET url$, R$', 1); return CMD_ESYNTAX; }
+        if (!resVar) { this.appendLine('WEBGET needs a result variable:  WEBGET url$, R$', 1); return C.CMD_ESYNTAX; }
         let url;
         if (urlPart.startsWith('"') && urlPart.endsWith('"')) url = urlPart.slice(1, -1);
         else url = String(this.lookup(urlPart) || urlPart);
         url = this.trim(url);
-        if (!url) { this.appendLine('WEBGET: empty URL', 1); return CMD_ESYNTAX; }
+        if (!url) { this.appendLine('WEBGET: empty URL', 1); return C.CMD_ESYNTAX; }
         if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
-        this.assign_(ASS_STRING, 'WEBERR$', '');
-        this.assign_(ASS_NUMBER, 'WEBSTATUS', 0);
+        this.assign_(C.ASS_STRING, 'WEBERR$', '');
+        this.assign_(C.ASS_NUMBER, 'WEBSTATUS', 0);
 
         // pause BASIC execution while the request is in flight
         this.want_ai = 1;
@@ -3621,24 +3643,24 @@ class Interpreter {
         const tid = setTimeout(() => controller.abort(), 20000);
         fetch(url, { method: 'GET', signal: controller.signal })
             .then(async (resp) => {
-                this.assign_(ASS_NUMBER, 'WEBSTATUS', resp.status || 0);
+                this.assign_(C.ASS_NUMBER, 'WEBSTATUS', resp.status || 0);
                 let body = await resp.text();         // signal still active — the abort also covers the body
                 clearTimeout(tid);
                 if (body.length > MAXLEN) body = body.slice(0, MAXLEN) + '\n...[truncated at 1 MB]';
-                this.assign_(ASS_STRING, resVar, body);
-                if (!resp.ok) this.assign_(ASS_STRING, 'WEBERR$', 'HTTP ' + resp.status);
+                this.assign_(C.ASS_STRING, resVar, body);
+                if (!resp.ok) this.assign_(C.ASS_STRING, 'WEBERR$', 'HTTP ' + resp.status);
                 finish();
             })
             .catch((err) => {
                 clearTimeout(tid);
                 const msg = (err && err.name === 'AbortError') ? 'timeout (20s)' : (String((err && err.message) || err) || 'error');
-                this.assign_(ASS_STRING, 'WEBERR$', msg);
-                this.assign_(ASS_STRING, resVar, '');
+                this.assign_(C.ASS_STRING, 'WEBERR$', msg);
+                this.assign_(C.ASS_STRING, resVar, '');
                 const hint = (msg === 'Failed to fetch') ? '  (the site may not allow cross-origin requests)' : '';
                 this.appendLine('WEB ERROR: ' + msg + hint, 1);
                 finish();
             });
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // =======================================================================
@@ -3696,10 +3718,10 @@ class Interpreter {
 
     cmdMOUSE(param) {
         const arg = this.trim(String(param || '')).toUpperCase();
-        if (arg === 'ON')   { this._mouseEnabled = 1; return CMD_OK; }
-        if (arg === 'OFF')  { this._mouseEnabled = 0; return CMD_OK; }
-        if (arg === 'STOP') { this._mouseEnabled = 2; return CMD_OK; }
-        return CMD_OK;
+        if (arg === 'ON')   { this._mouseEnabled = 1; return C.CMD_OK; }
+        if (arg === 'OFF')  { this._mouseEnabled = 0; return C.CMD_OK; }
+        if (arg === 'STOP') { this._mouseEnabled = 2; return C.CMD_OK; }
+        return C.CMD_OK;
     }
 
     // AI — send a prompt and stream the reply into the terminal.
@@ -3716,7 +3738,7 @@ class Interpreter {
     //         AINUM "prompt", VAR
     _aiDispatch(param, mode) {
         const raw = this.trim(String(param || ''));
-        if (!raw) return CMD_ESYNTAX;
+        if (!raw) return C.CMD_ESYNTAX;
 
         // Split prompt from optional result variable.
         // Prompt may be a quoted string or a variable name.
@@ -3751,11 +3773,11 @@ class Interpreter {
 
         if (!this.ai_key) {
             this.appendLine('No API key set. Type AIKEY to enter your Anthropic key.', 1);
-            this.assign_(ASS_STRING, 'AIERR$', 'no API key');
-            return CMD_OK;
+            this.assign_(C.ASS_STRING, 'AIERR$', 'no API key');
+            return C.CMD_OK;
         }
         // AIERR$ holds the last AI error message ("" on success) so a program can test it.
-        this.assign_(ASS_STRING, 'AIERR$', '');
+        this.assign_(C.ASS_STRING, 'AIERR$', '');
 
         // Pause the BASIC execution loop.
         this.want_ai = 1;
@@ -3778,7 +3800,7 @@ class Interpreter {
             this.want_ai = 0;
             if (!silent) this.appendLine('', 1);
             // The tick loop already advanced run_line when this handler returned
-            // CMD_OK; don't double-advance here. Same invariant as _runAuthOp.
+            // C.CMD_OK; don't double-advance here. Same invariant as _runAuthOp.
             if (this.running) this._scheduleNextTick();
             else { this.appendLine(this.prompt, 0); this.blink(); }
         };
@@ -3787,24 +3809,24 @@ class Interpreter {
             if (resultVar) {
                 if (numMode) {
                     const n = parseFloat(fullText.trim());
-                    this.assign_(ASS_NUMBER, resultVar, isNaN(n) ? 0 : n);
+                    this.assign_(C.ASS_NUMBER, resultVar, isNaN(n) ? 0 : n);
                 } else {
-                    this.assign_(ASS_STRING, resultVar, fullText.trim());
+                    this.assign_(C.ASS_STRING, resultVar, fullText.trim());
                 }
             }
             finish();
         }).catch((err) => {
             const msg = String((err && err.message) || err) || 'error';
-            this.assign_(ASS_STRING, 'AIERR$', msg);
+            this.assign_(C.ASS_STRING, 'AIERR$', msg);
             if (resultVar) {                       // leave a defined value the program can test
-                if (numMode) this.assign_(ASS_NUMBER, resultVar, 0);
-                else         this.assign_(ASS_STRING, resultVar, '');
+                if (numMode) this.assign_(C.ASS_NUMBER, resultVar, 0);
+                else         this.assign_(C.ASS_STRING, resultVar, '');
             }
             this.appendLine('AI ERROR: ' + msg, 1);
             finish();
         });
 
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // _callAnthropicAPI — streams a response from the configured model (default claude-haiku-4-5).
@@ -4047,7 +4069,7 @@ class Interpreter {
             ['OBJECT.SCALE',    0,  (p) => this.cmdOBJECT_SCALE(p),    1],
             ['OBJECT.FLIP',     0,  (p) => this.cmdOBJECT_FLIP(p),     1],
             ['OBJECT.ROTATE',   0,  (p) => this.cmdOBJECT_ROTATE(p),   1],
-            ['OBJECT.PLANES',   0,  (p) => CMD_OK,                      1],
+            ['OBJECT.PLANES',   0,  (p) => C.CMD_OK,                      1],
             ['OBJECT.CLIP',     0,  (p) => this.cmdOBJECT_CLIP(p),     1],
             ['OBJECT.HIT',      0,  (p) => this.cmdOBJECT_HIT(p),      1],
             ['OBJECT.OFF',      0,  (p) => this.cmdOBJECT_OFF(p),      1],
@@ -4332,7 +4354,7 @@ class Interpreter {
             const _swTrim = sWork.trim();
             const _swU = _swTrim.toUpperCase();
             if (!(_swU === 'DEFAULT:' || _swU.startsWith('CASE ')) &&
-                /^[A-Za-z][A-Za-z0-9.]{0,39}:$/.test(_swTrim)) return CMD_OK;
+                /^[A-Za-z][A-Za-z0-9.]{0,39}:$/.test(_swTrim)) return C.CMD_OK;
         }
 
         // LET assignment
@@ -4341,9 +4363,9 @@ class Interpreter {
             if (eqPos > 0) {
                 const err = this.parseAssign(this.trim(sWork.substring(3)));
                 if (err) this.appendLine(err, 1);
-                return CMD_OK;
+                return C.CMD_OK;
             }
-            return CMD_ESYNTAX;
+            return C.CMD_ESYNTAX;
         }
 
         // ELSE (block-IF) — flip skipping state.
@@ -4352,16 +4374,16 @@ class Interpreter {
                 const frame = this._if_stack[this._if_stack.length - 1];
                 frame.skipping = frame.done;
             }
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // RUN / LOAD / SAVE are handled separately because they may contain ':' in params.
         if (upper3 === 'RUN')  return this.cmdRUN(this.trim(sWork.substring(3)));
         if (upper4 === 'LOAD' && sUpper.substring(0, 7) !== 'LOADIMG') {
             let sParam = this.trim(sWork.substring(4));
-            if (sParam.endsWith('$')) sParam = String(this.getValue(sParam, 0, sParam.length, ASS_STRING));
+            if (sParam.endsWith('$')) sParam = String(this.getValue(sParam, 0, sParam.length, C.ASS_STRING));
             this.cmdLOAD(sParam);
-            return CMD_END;
+            return C.CMD_END;
         }
         if (upper4 === 'SAVE') return this.cmdSAVE(this.trim(sWork.substring(4)));
 
@@ -4405,7 +4427,7 @@ class Interpreter {
         if (eqPos > 0 && eqPos < sWork.length - 1) {
             const err = this.parseAssign(sWork);
             if (err) this.appendLine(err, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Implicit SUB call — "SubName arg1, arg2" without CALL keyword
@@ -4419,7 +4441,7 @@ class Interpreter {
             }
         }
 
-        return CMD_ESYNTAX;
+        return C.CMD_ESYNTAX;
     }
 
     // -----------------------------------------------------------------------
@@ -4454,7 +4476,7 @@ class Interpreter {
             const passThrough = uLine.startsWith('ELSEIF') || uLine.startsWith('ELSE IF') ||
                                 uLine.startsWith('ELSE')   || uLine.startsWith('END IF') ||
                                 uLine.startsWith('ENDIF')  || uLine.startsWith('IF');
-            if (!passThrough) return CMD_OK;
+            if (!passThrough) return C.CMD_OK;
         }
 
         // SELECT CASE skipping: skip non-matching CASE bodies.
@@ -4463,7 +4485,7 @@ class Interpreter {
             const passThrough2 = uLine2.startsWith('CASE') || uLine2.startsWith('SWITCH') ||
                                  uLine2.startsWith('END SWITCH') || uLine2.startsWith('ENDSWITCH') ||
                                  uLine2.startsWith('DEFAULT');
-            if (!passThrough2) return CMD_OK;
+            if (!passThrough2) return C.CMD_OK;
         }
 
         // Find the first ':' not inside quotes — statement separator.
@@ -4480,7 +4502,7 @@ class Interpreter {
         const _trimA = a.trim().toUpperCase();
         const _isSwitchKeyword = _trimA === 'DEFAULT:' || _trimA.startsWith('CASE ');
         if (!_isSwitchKeyword && iSepPos === a.trim().length - 1 && /^[A-Za-z][A-Za-z0-9.]{0,39}:$/.test(a.trim())) {
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         let sRemainingLine = null;
@@ -4537,12 +4559,12 @@ class Interpreter {
             }
 
             switch (iReady) {
-                case CMD_END:     return -2;
-                case CMD_OK:      iReady = 1; break;
-                case CMD_ESYNTAX:
+                case C.CMD_END:     return -2;
+                case C.CMD_OK:      iReady = 1; break;
+                case C.CMD_ESYNTAX:
                     this.appendLine(this.error_syntax + (this.running ? ' ' + this.at + ' ' + this.run_line : ''), 1);
                     return -2;
-                case CMD_EDATA:
+                case C.CMD_EDATA:
                     this.appendLine(this.error_data + (this.running ? ' ' + this.at + ' ' + this.run_line : ''), 1);
                     return -2;
                 default:          iReady = 1; break;
@@ -4562,7 +4584,7 @@ class Interpreter {
             this.processing_line = 1;
             const remResult = this.interpret(this.line_remaining);
             this.processing_line = 0;
-            // Propagate jump targets (GOTO/GOSUB/RETURN) and CMD_END from
+            // Propagate jump targets (GOTO/GOSUB/RETURN) and C.CMD_END from
             // the remainder back to tick() so run_line is set correctly.
             // Without this, RETURN inside "A=1 : RETURN" discards the return address.
             if (remResult >= 0 || remResult === -2) {
@@ -4602,12 +4624,12 @@ class Interpreter {
                 const hasOper = /[+\-*/%^]/.test(t.replace(/"[^"]*"/g, ''));
                 if (hasOper) {
                     // Expression with operators — evaluate fully (handles "str"+var+"str")
-                    sToken = String(this.evalCalc(t, ASS_ANY) ?? '');
+                    sToken = String(this.evalCalc(t, C.ASS_ANY) ?? '');
                 } else if (t.startsWith('"')) {
                     // Plain string literal — extract content between quotes
                     sToken = t.substring(1, t.lastIndexOf('"'));
                 } else {
-                    sToken = String(this.getValue(t, 0, t.length, ASS_ANY) ?? '');
+                    sToken = String(this.getValue(t, 0, t.length, C.ASS_ANY) ?? '');
                 }
             }
 
@@ -4739,7 +4761,7 @@ class Interpreter {
         this.last_key_pressed = 0;
         this._keysHeld = {};   // keyCode → true while key held   // flush INKEY buffer
         if (this.running) this.tick(1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
         run() {
@@ -4831,13 +4853,13 @@ class Interpreter {
     // Called once at RUN time. Invalidated by NEW/LOAD/EDIT.
     // -----------------------------------------------------------------------
     _buildLineCache() {
-        this._lineCache = new Array(MAX_LINES);
+        this._lineCache = new Array(C.MAX_LINES);
         const lines = this.lines;
         // Only iterate line numbers that are actually assigned — avoids scanning
         // 10,000 empty slots for small programs (the common case).
         const toProcess = this.lines_assigned.size > 0
             ? [...this.lines_assigned].sort((a, b) => a - b)
-            : Array.from({ length: MAX_LINES }, (_, i) => i);
+            : Array.from({ length: C.MAX_LINES }, (_, i) => i);
         for (const ln of toProcess) {
             const raw = lines[ln];
             if (!raw || raw === '') continue;
@@ -4936,7 +4958,7 @@ class Interpreter {
 
             const iNewLine = this.interpret(sTemp);
             if (this.running) {
-                if      (iNewLine === -2 || iNewLine === CMD_END) { this.running = 0; this.just_stopped = 1; }
+                if      (iNewLine === -2 || iNewLine === C.CMD_END) { this.running = 0; this.just_stopped = 1; }
                 else if (iNewLine >= 0)   { this.run_line = iNewLine; }
             }
 
@@ -5041,19 +5063,19 @@ class Interpreter {
                             if (cached.assign) {
                                 // Ultra-fast path: pre-parsed numeric assignment
                                 if (cached.exprNode) {
-                                    const val = this._evalExprTree(cached.exprNode, ASS_NUMBER);
+                                    const val = this._evalExprTree(cached.exprNode, C.ASS_NUMBER);
                                     this.variables_numbers.set(cached.varName, Number(val));
-                                    iNewLine = CMD_OK;
+                                    iNewLine = C.CMD_OK;
                                 } else if (cached.canCache) {
                                     // First execution — lazily parse and store the tree
                                     cached.exprNode = this._parseExprTree(cached.rhs);
-                                    const val = this._evalExprTree(cached.exprNode, ASS_NUMBER);
+                                    const val = this._evalExprTree(cached.exprNode, C.ASS_NUMBER);
                                     this.variables_numbers.set(cached.varName, Number(val));
-                                    iNewLine = CMD_OK;
+                                    iNewLine = C.CMD_OK;
                                 } else {
                                     const err = this.parseAssign(cached.raw);
                                     if (err) this.appendLine(err, 1);
-                                    iNewLine = CMD_OK;
+                                    iNewLine = C.CMD_OK;
                                 }
                             } else {
                                 const { entry, paramStr } = cached;
@@ -5077,7 +5099,7 @@ class Interpreter {
                     } else {
                         iNewLine = (() => { try { return this.interpret(this.lines[this.run_line]); } catch(e) { this.appendLine('JS ERROR at line '+this.run_line+': '+e.message,1); return -2; } })();
                     }
-                    if      (iNewLine === -2 || iNewLine === CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
+                    if      (iNewLine === -2 || iNewLine === C.CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
                     else if (iNewLine >= 0)   { this.run_line = iNewLine; }
                     else                      { this.run_line++; }
                     // Process IF branch immediately within batch.
@@ -5096,9 +5118,9 @@ class Interpreter {
                         const _savedRunLine = this.run_line;
                         this.run_line = _ifSourceLine;
                         const ifNewLine = this.interpret(_savedIfLine);
-                        if (ifNewLine < 0 || ifNewLine === CMD_OK) this.run_line = _savedRunLine;
+                        if (ifNewLine < 0 || ifNewLine === C.CMD_OK) this.run_line = _savedRunLine;
                         this._inBatch = false;
-                        if      (ifNewLine === -2 || ifNewLine === CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
+                        if      (ifNewLine === -2 || ifNewLine === C.CMD_END) { this.running = 0; iStopped = 1; this.just_stopped = 1; }
                         else if (ifNewLine >= 0) {
                             // Jump (CALL/GOTO): queue any remaining colon statements
                             // so they run after the jump completes.
@@ -5133,7 +5155,7 @@ class Interpreter {
                         else if (this.line_remaining !== '') { break; }
                     }
                 }
-                if (this.run_line >= MAX_LINES) { iStopped = 1; break; }
+                if (this.run_line >= C.MAX_LINES) { iStopped = 1; break; }
                 this._skipToNextLine();
             }
             if (!iStopped && this.running) {
@@ -5154,7 +5176,7 @@ class Interpreter {
         }
     }
 
-    // Skip over empty program lines; never run past MAX_LINES.
+    // Skip over empty program lines; never run past C.MAX_LINES.
 
 
 

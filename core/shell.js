@@ -1,5 +1,9 @@
 'use strict';
 
+import * as C from './constants.js';
+import { AuthService }                              from './auth/auth_service.js';
+
+
 // ---------------------------------------------------------------------------
 // ShellRuntime  (core/shell.js)
 //
@@ -13,7 +17,7 @@
 // All state access goes through this._host (the Interpreter instance).
 // ---------------------------------------------------------------------------
 
-class ShellRuntime {
+export class ShellRuntime {
 
     constructor(host) {
         this._host = host;
@@ -114,7 +118,7 @@ class ShellRuntime {
         }
         // ── Current program memory ──────────────────────────────────────────
         const used = this.lines_assigned ? this.lines_assigned.size : 0;
-        const free = MAX_LINES - used;
+        const free = C.MAX_LINES - used;
         let lineCount = 0, maxLine = 0;
         if (this.lines) {
             for (let i = 0; i < this.lines.length; i++) {
@@ -131,11 +135,11 @@ class ShellRuntime {
         this.appendLine('Program info:', 1);
         this.appendLine(`  Lines used  : ${lineCount}`, 1);
         this.appendLine(`  Highest line: ${maxLine}`, 1);
-        this.appendLine(`  Lines free  : ${free} of ${MAX_LINES}`, 1);
+        this.appendLine(`  Lines free  : ${free} of ${C.MAX_LINES}`, 1);
         if (numVars > 0 || arrVars > 0) {
             this.appendLine(`  Variables   : ${numVars} scalar, ${arrVars} array`, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdINFO() { return this.cmdMEM(); }
@@ -252,7 +256,7 @@ class ShellRuntime {
 
         line('');
         line('=== end HWINFO ===');
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLABELS() {
@@ -266,16 +270,16 @@ class ShellRuntime {
                 this.appendLine(`  ${String(line).padStart(5)}  ${name}:`, 1);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdHELP(topic) {
         this.help(this.trim(String(topic || '')));
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdVIEW(param) {
-        if (!param) { this.appendLine('VIEW: specify a filename, e.g. VIEW TEXT/OSAWARE.TXT', 1); return CMD_OK; }
+        if (!param) { this.appendLine('VIEW: specify a filename, e.g. VIEW TEXT/OSAWARE.TXT', 1); return C.CMD_OK; }
         // Strip surrounding quotes if present
         const path = this.trim(String(param)).replace(/^["']|["']$/g, '');
         // Resolve: try with TEXT/ prefix if no slash given
@@ -285,17 +289,17 @@ class ShellRuntime {
         }
         if (text === null) {
             this.appendLine('VIEW: file not found: ' + path, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         // Print each line to the terminal
         const lines = text.split('\n');
         for (const line of lines) {
             this.appendLine(line, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
-    cmdCLEARSCREEN() { this.cls(); return CMD_OK; }
+    cmdCLEARSCREEN() { this.cls(); return C.CMD_OK; }
 
     // Parse a LIST range argument into [start, end].
     // Accepts a RAW string (LIST is selfHandling=1):
@@ -312,14 +316,14 @@ class ShellRuntime {
         const raw = String(rawParam ?? '').trim();
 
         // No arg at all — list everything.
-        if (!raw) return [0, MAX_LINES - 1];
+        if (!raw) return [0, C.MAX_LINES - 1];
 
         // Label name — resolve to its line number, list from there to end
         if (/^[A-Za-z][A-Za-z0-9.]*$/.test(raw)) {
             this._scanLabels();
             const ln = this._labels[raw.toUpperCase()];
-            if (ln !== undefined) return [ln, MAX_LINES - 1];
-            return [0, MAX_LINES - 1];  // unknown label — list everything
+            if (ln !== undefined) return [ln, C.MAX_LINES - 1];
+            return [0, C.MAX_LINES - 1];  // unknown label — list everything
         }
 
         // Dash range: "100-200"
@@ -342,7 +346,7 @@ class ShellRuntime {
         }
 
         // Fallback — unrecognised, list everything
-        return [0, MAX_LINES - 1];
+        return [0, C.MAX_LINES - 1];
     }
 
     cmdLIST(param) {
@@ -350,7 +354,7 @@ class ShellRuntime {
         for (let i = s; i <= f; i++) {
             if (this.lines_assigned.has(i)) this.appendLine(`${i} ${this.lines[i]}`, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLLIST(param) {
@@ -358,12 +362,12 @@ class ShellRuntime {
         for (let i = s; i <= f; i++) {
             if (this.lines_assigned.has(i)) this.lprinter.print(`${i} ${this.lines[i]}`, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDIM(params) {
         // FIX: removed spurious `break` — all params are now processed.
-        if (!params) return CMD_ESYNTAX;
+        if (!params) return C.CMD_ESYNTAX;
         if (!this._dimInfo) this._dimInfo = {};
         if (!this._dimClass) this._dimClass = {};
         for (let thisDim of params) {
@@ -411,7 +415,7 @@ class ShellRuntime {
                 }
                 // Track max index for UBOUND
                 if (!this._arrMax) this._arrMax = {};
-                const typeKey = (isStr ? ASS_ARRAY_STRING : ASS_ARRAY_NUMBER) + ':' + varName;
+                const typeKey = (isStr ? C.ASS_ARRAY_STRING : C.ASS_ARRAY_NUMBER) + ':' + varName;
                 this._arrMax[typeKey] = total - 1;
             } else if (thisDim[0] !== '') {
                 this.assign(thisDim, isStr ? '' : '0');
@@ -419,12 +423,12 @@ class ShellRuntime {
                 this.appendLine(this.error_syntax, 1);
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // FIX: cmdSAVE is now implemented properly.
     cmdSAVE(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
         const name = this.trim(param);
 
         // SAVE DOWNLOAD [filename] — download current program as a .bas file
@@ -441,7 +445,7 @@ class ShellRuntime {
             }
             if (lineNums.length === 0) {
                 this.appendLine('Nothing to save — program is empty.', 1);
-                return CMD_OK;
+                return C.CMD_OK;
             }
             const content = lineNums.join('\n') + '\n';
             // Trigger browser download
@@ -455,12 +459,12 @@ class ShellRuntime {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
             this.appendLine('Downloaded: ' + filename + ' (' + lineNums.length + ' lines)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         const ok = this.fs.saveFile(name, this.lines, null);
         if (!ok) this.appendLine(this.error_save, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdFILES(param) {
@@ -493,11 +497,11 @@ class ShellRuntime {
             this.appendLine(' VIEW <filename> to read', 1);
             this.appendLine('', 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdDELUSER(param) {
-        if (!param) { this.appendLine('Usage: DELUSER <name>', 1); return CMD_ESYNTAX; }
+        if (!param) { this.appendLine('Usage: DELUSER <name>', 1); return C.CMD_ESYNTAX; }
         const name = this.trim(param).toUpperCase();
         const idx  = this.fs._userFiles.findIndex(([n]) => n === name);
         if (idx < 0) {
@@ -507,7 +511,7 @@ class ShellRuntime {
             this.fs._persistUserFiles();
             this.appendLine('Deleted: ' + name, 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 
@@ -516,16 +520,16 @@ class ShellRuntime {
 // Usage:  VFSPUT "MYGAME/LEVEL1.DAT", levelData$
     cmdVFSPUT(param) {
         const args = this._splitArgs(param, 2);
-        if (args.length < 2) return CMD_ESYNTAX;
+        if (args.length < 2) return C.CMD_ESYNTAX;
         const path = args[0];
         const data = args[1];
-        if (!path) return CMD_ESYNTAX;
+        if (!path) return C.CMD_ESYNTAX;
         const ext = path.split('.').pop().toLowerCase();
         const mime = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg',
                        txt:'text/plain', json:'application/json',
                        dat:'application/octet-stream' }[ext] || 'text/plain';
         this.fs.putAsset(path, mime, data);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // VFSGET$ "path" — retrieve user asset data as a string.
@@ -546,7 +550,7 @@ class ShellRuntime {
 //   or:   READTEXT "TEXT/OSAWARE.TXT", "LINES$"
 //         FOR I=1 TO LINES_COUNT : PRINT LINES$(I) : NEXT I
     cmdREADTEXT(param) {
-        if (!param) { this.appendLine('READTEXT: specify a filename', 1); return CMD_OK; }
+        if (!param) { this.appendLine('READTEXT: specify a filename', 1); return C.CMD_OK; }
 
         // Resolve first arg as a string (handles quoted literals AND variables like F$)
         // Split on comma to allow optional array name: READTEXT "file", "ARR$"
@@ -563,7 +567,7 @@ class ShellRuntime {
         }
         if (text === null) {
             this.appendLine('READTEXT: file not found: ' + rawPath, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Determine array name — strip trailing $ if given.
@@ -593,33 +597,33 @@ class ShellRuntime {
         // Store count as a numeric variable
         interp.assign(countVar, lines.length);
 
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // VFSIMG "path", "imgname" — save a loaded image (from LOADIMG store) into VFS.
 // Usage:  LOADIMG "hero","https://..."  then  VFSIMG "MYGAME/HERO.PNG","hero"
     cmdVFSIMG(param) {
         const args = this._splitArgs(param, 2);
-        if (args.length < 2) return CMD_ESYNTAX;
+        if (args.length < 2) return C.CMD_ESYNTAX;
         const path    = args[0];
         const imgname = args[1];
-        if (!path || !imgname) return CMD_ESYNTAX;
+        if (!path || !imgname) return C.CMD_ESYNTAX;
         const data = this._imgStore()[imgname];
         if (!data) {
             this.appendLine('VFSIMG: image not found in store: ' + imgname, 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         this.fs.putAsset(path, 'image/png', data);
         this.appendLine('Saved ' + imgname + ' → ' + path, 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // VFSDEL "path" — delete a user VFS asset.
     cmdVFSDEL(param) {
         const path = this._resolveStrArg(param);
-        if (!path) return CMD_ESYNTAX;
+        if (!path) return C.CMD_ESYNTAX;
         this.fs.deleteAsset(path);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // =======================================================================
@@ -640,7 +644,7 @@ class ShellRuntime {
     //
     // IMPORTANT: When a BASIC program calls an async auth command, the tick
     // loop has ALREADY advanced run_line past the DEVLOGIN line by the time
-    // cmdDEVLOGIN returns CMD_OK. The batch then breaks because want_auth=1.
+    // cmdDEVLOGIN returns C.CMD_OK. The batch then breaks because want_auth=1.
     // So on async resume, we must NOT increment run_line again — we'd skip
     // the line immediately after DEVLOGIN. We just reschedule the tick.
     _runAuthOp(asyncOp, onSuccess) {
@@ -678,76 +682,76 @@ class ShellRuntime {
 
     // DEVLOGIN "user", "pass" — dev sandbox login against MockRemoteStorageProvider
     cmdDEVLOGIN(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('DEVLOGIN: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const args = this._splitArgs(param, 2);
         if (args.length < 2) {
             this.appendLine('Usage: DEVLOGIN "user", "password"', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const username = args[0];
         const password = args[1];
 
         this._runAuthOp(
-            window.AuthService.devLogin(username, password),
+            AuthService.devLogin(username, password),
             (result) => {
                 this.appendLine('Logged in as ' + result.user + ' (dev)', 1);
             }
         );
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // DEVLOGOUT — leave dev sandbox, swap back to local provider
     cmdDEVLOGOUT(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('DEVLOGOUT: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         this._runAuthOp(
-            window.AuthService.devLogout(),
+            AuthService.devLogout(),
             (result) => {
                 this.appendLine('Logged out (dev, was ' + result.user + ')', 1);
             }
         );
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // DEVWHOAMI — print the current dev-mode username (sync)
     cmdDEVWHOAMI(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('DEVWHOAMI: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
-        const user = window.AuthService.devCurrentUser();
+        const user = AuthService.devCurrentUser();
         this.appendLine(user ? user : '(no dev session)', 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // LOGIN "user", "pass" — real production auth via RemoteStorageProvider.
     // LOGIN "user"         — short form; prompts for password obfuscated.
     cmdLOGIN(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('LOGIN: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const args = this._splitArgs(param, 2);
         const username = args[0] || '';
         if (!username) {
             this.appendLine('Usage: LOGIN "user" [, "password"]', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Full form: password provided inline
         if (args.length >= 2 && args[1]) {
             this._runAuthOp(
-                window.AuthService.login(username, args[1]),
+                AuthService.login(username, args[1]),
                 (result) => {
                     this.appendLine('Logged in as ' + result.user, 1);
                 }
             );
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Short form: prompt for password
@@ -761,48 +765,48 @@ class ShellRuntime {
                 return;
             }
             this._runAuthOp(
-                window.AuthService.login(username, pw),
+                AuthService.login(username, pw),
                 (result) => {
                     this.appendLine('Logged in as ' + result.user, 1);
                 }
             );
         }, 'Enter password: ');
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // LOGOUT — end production auth session
     cmdLOGOUT(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('LOGOUT: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         this._runAuthOp(
-            window.AuthService.logout(),
+            AuthService.logout(),
             (result) => {
                 this.appendLine('Logged out (was ' + result.user + ')', 1);
             }
         );
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // REGISTER "user", "pass" — create account and auto-login.
     // REGISTER "user"         — short form; prompts for password obfuscated.
     cmdREGISTER(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('REGISTER: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         const args = this._splitArgs(param, 2);
         const username = args[0] || '';
         if (!username) {
             this.appendLine('Usage: REGISTER "user" [, "password"]', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Helper to run the actual register call with a given password
         const doRegister = (pw) => {
             this._runAuthOp(
-                window.AuthService.register(username, pw),
+                AuthService.register(username, pw),
                 (result) => {
                     this.appendLine('Registered and logged in as ' + result.user, 1);
                     this.appendLine('(your LOCAL data is preserved and will return on LOGOUT)', 1);
@@ -813,7 +817,7 @@ class ShellRuntime {
         // Full form
         if (args.length >= 2 && args[1]) {
             doRegister(args[1]);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Short form: prompt for password
@@ -828,7 +832,7 @@ class ShellRuntime {
             }
             doRegister(pw);
         }, 'Enter password: ');
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // PASSWORD — three-step prompt to change own password.
@@ -846,19 +850,19 @@ class ShellRuntime {
     // No inline form — passwords must always be entered via the masked
     // prompt to prevent shoulder-surfing or accidental history capture.
     cmdPASSWORD(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('PASSWORD: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         // Determine which auth mode we're in. Dev mode uses devChangePassword,
         // real mode uses changePassword. If neither, the user isn't logged
         // in at all.
-        const isDev  = window.AuthService.devCurrentUser && window.AuthService.devCurrentUser();
-        const isReal = window.AuthService.currentUser   && window.AuthService.currentUser();
+        const isDev  = AuthService.devCurrentUser && AuthService.devCurrentUser();
+        const isReal = AuthService.currentUser   && AuthService.currentUser();
         if (!isDev && !isReal) {
             this.appendLine('PASSWORD: not logged in (use LOGIN or DEVLOGIN first)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         const host = this._host;
@@ -896,8 +900,8 @@ class ShellRuntime {
 
                     // All three captured; submit to auth service
                     const op = isDev
-                        ? window.AuthService.devChangePassword(currentPw, newPw)
-                        : window.AuthService.changePassword(currentPw, newPw);
+                        ? AuthService.devChangePassword(currentPw, newPw)
+                        : AuthService.changePassword(currentPw, newPw);
 
                     self._runAuthOp(op, (result) => {
                         self.appendLine('Password changed', 1);
@@ -910,7 +914,7 @@ class ShellRuntime {
                 }, 'Confirm new password: ');
             }, 'New password: ');
         }, 'Current password: ');
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // DELETEACCOUNT — soft-delete (archive) the current account.
@@ -928,17 +932,17 @@ class ShellRuntime {
     // Branches on dev vs real auth. No inline form (deletion must
     // always be interactive).
     cmdDELETEACCOUNT(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('DELETEACCOUNT: AuthService not loaded', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
-        const isDev      = window.AuthService.devCurrentUser && window.AuthService.devCurrentUser();
-        const isReal     = window.AuthService.currentUser   && window.AuthService.currentUser();
+        const isDev      = AuthService.devCurrentUser && AuthService.devCurrentUser();
+        const isReal     = AuthService.currentUser   && AuthService.currentUser();
         const currentUsr = isDev || isReal;
         if (!currentUsr) {
             this.appendLine('DELETEACCOUNT: not logged in (use LOGIN or DEVLOGIN first)', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
 
         const host = this._host;
@@ -974,8 +978,8 @@ class ShellRuntime {
 
                 // Submit to auth service
                 const op = isDev
-                    ? window.AuthService.devArchiveSelf(password, typedUsername)
-                    : window.AuthService.archiveSelf(password, typedUsername);
+                    ? AuthService.devArchiveSelf(password, typedUsername)
+                    : AuthService.archiveSelf(password, typedUsername);
 
                 self._runAuthOp(op, (result) => {
                     self.appendLine('Account archived: ' + result.archived_username, 1);
@@ -983,20 +987,20 @@ class ShellRuntime {
                 });
             }, 'Enter password to confirm: ');
         }, 'Type your username to confirm: ');
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     // WHOAMI — print the current production-auth username (sync).
     // Reports the real-auth user, or "local" if not logged in.
     // DEVWHOAMI reports the dev-mode username separately.
     cmdWHOAMI(param) {
-        if (typeof window === 'undefined' || !window.AuthService) {
+        if (false) {
             this.appendLine('local', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
-        const user = window.AuthService.currentUser();
+        const user = AuthService.currentUser();
         this.appendLine(user ? user : 'local', 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // DIR [folder] — list VFS contents. DIR alone = full listing, DIR MAZE3D = folder listing.
@@ -1007,11 +1011,11 @@ class ShellRuntime {
         } else {
             this.fs._showListing(this);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdLOAD(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
 
         // Pause execution while file loads asynchronously.
         this.want_ai = 1;
@@ -1049,7 +1053,7 @@ class ShellRuntime {
                 this.appendLine(this.error_file, 1);
                 if (!this.running) { this.appendLine(this.prompt, 0); this.blink(); }
             });
-            return CMD_END;
+            return C.CMD_END;
         }
 
         // Synchronous result (in-memory files like MENU).
@@ -1068,17 +1072,17 @@ class ShellRuntime {
                 this.blink();
             }
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
-    cmdRESET() { this.reset_(); this.cls(); return CMD_OK; }
+    cmdRESET() { this.reset_(); this.cls(); return C.CMD_OK; }
 
-    cmdRESIZE(fontSize) { this.reset_(fontSize); this.cls(); return CMD_OK; }
+    cmdRESIZE(fontSize) { this.reset_(fontSize); this.cls(); return C.CMD_OK; }
 
     cmdNEW() {
         // Clear program lines
         this.lines_assigned = new Set();
-        this.lines          = new Array(MAX_LINES).fill('');
+        this.lines          = new Array(C.MAX_LINES).fill('');
         // Clear all variables and flow state — same as a fresh start
         this._host.zapVariables();
         this._host.data          = null;
@@ -1103,14 +1107,14 @@ class ShellRuntime {
         this._host._lineCache     = null;
         this._host._exprCache     = new Map();
         this._host._on_goto_table = null;
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
 // MERGE <filename>  –  load a file and merge its lines into the current program.
 // Unlike LOAD, existing lines are NOT cleared first; loaded lines overwrite
 // only the line numbers present in the file.
     cmdMERGE(param) {
-        if (!param) return CMD_ESYNTAX;
+        if (!param) return C.CMD_ESYNTAX;
 
         this.want_ai = 1;
         if (this.execute_timer) { clearTimeout(this.execute_timer); this.execute_timer = 0; }
@@ -1141,12 +1145,12 @@ class ShellRuntime {
                 this.appendLine(this.error_file, 1);
                 if (!this.running) { this.appendLine(this.prompt, 0); this.blink(); }
             });
-            return CMD_END;
+            return C.CMD_END;
         }
 
         this.want_ai = 0;
         _mergeLines(result);
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdRUN(param) {
@@ -1159,7 +1163,7 @@ class ShellRuntime {
 
             if (winFlag && namePart) {
                 const progName = namePart.endsWith('$')
-                    ? String(this.getValue(namePart, 0, namePart.length, 1 /* ASS_STRING */))
+                    ? String(this.getValue(namePart, 0, namePart.length, 1 /* C.ASS_STRING */))
                     : namePart.toUpperCase();
 
                 // Validate existence BEFORE opening the window
@@ -1212,23 +1216,23 @@ class ShellRuntime {
 
         if (param && param !== '') {
             const sName = param.endsWith('$')
-                ? String(this.getValue(param, 0, param.length, 1 /* ASS_STRING */))
+                ? String(this.getValue(param, 0, param.length, 1 /* C.ASS_STRING */))
                 : param;
-            // cmdLOAD may be async (returns CMD_END for disk files).
+            // cmdLOAD may be async (returns C.CMD_END for disk files).
             // Set flag so the async handler calls run() when file is ready.
             this._host._lastLoadedName = sName.replace(/^WEB:/i,'').toUpperCase();
             this._runAfterLoad = true;
             const loadResult = this.cmdLOAD(sName);
-            if (loadResult === CMD_OK) {
+            if (loadResult === C.CMD_OK) {
                 // Synchronous load (in-memory file) — run immediately.
                 this._runAfterLoad = false;
                 this.run();
             }
-            // If async (CMD_END), cmdLOAD's Promise handler will call run().
+            // If async (C.CMD_END), cmdLOAD's Promise handler will call run().
             return 1;
         }
         this.run();
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
     cmdCONT() {
@@ -1239,18 +1243,18 @@ class ShellRuntime {
         } else {
             this.appendLine('CANNOT CONTINUE', 1);
         }
-        return CMD_OK;
+        return C.CMD_OK;
     }
 
-    cmdTRON()  { this._trace = true;  return CMD_OK; }
-    cmdTROFF() { this._trace = false; return CMD_OK; }
+    cmdTRON()  { this._trace = true;  return C.CMD_OK; }
+    cmdTROFF() { this._trace = false; return C.CMD_OK; }
 
     // -----------------------------------------------------------------------
     cmdHISTORY() {
         const lines = this.history.lines;
         if (lines.length === 0) {
             this.appendLine('No history yet.', 1);
-            return CMD_OK;
+            return C.CMD_OK;
         }
         this.appendLine('', 1);
         this.appendLine(' Command History', 1);
@@ -1261,7 +1265,7 @@ class ShellRuntime {
             this.appendLine(num + '  ' + lines[i], 1);
         }
         this.appendLine('', 1);
-        return CMD_OK;
+        return C.CMD_OK;
     }
     help(topic) {
         // Clear the screen when HELP is called with no topic, as the original did.
